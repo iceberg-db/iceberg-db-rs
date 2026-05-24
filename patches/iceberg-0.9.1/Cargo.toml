@@ -120,9 +120,10 @@ version = "0.3"
 [dependencies.itertools]
 version = "0.13"
 
-[dependencies.moka]
-version = "0.12.10"
-features = ["future"]
+# ObjectCache uses moka only on native targets (see io/object_cache.rs).
+# On wasm32 the cache is disabled; omit moka so we avoid pulling web_time.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+moka = { version = "0.12.10", features = ["future"] }
 
 [dependencies.murmur3]
 version = "0.5.2"
