@@ -34,6 +34,18 @@ rustup target add wasm32-unknown-unknown
 cargo install trunk
 ```
 
+### WASM: `unresolved import web_time` (moka)
+
+**Cause:** `patches/iceberg-0.9.1/Cargo.toml` listed **moka** as a normal dependency, so Cargo still built it for `wasm32` even though `object_cache.rs` disables the cache on WASM. Moka 0.12.15 then expects the `web_time` crate on WASM.
+
+**Fix:** `moka` is only a **native** dependency in the patch `Cargo.toml`. Then from repo root:
+
+```powershell
+cargo clean -p iceberg -p idb-wasm
+cd web-wasm
+trunk build
+```
+
 ### WASM: `time not implemented on this platform`
 
 **Cause:** Connect used to load every Iceberg table at once; building tables touched **moka**, which calls `std::time::Instant::now()` (unsupported on `wasm32-unknown-unknown`).
