@@ -1,0 +1,3 @@
+# WASM needs clang for zstd-sys (Iceberg). On Windows run: web-wasm\serve.ps1
+[target.wasm32-unknown-unknown]
+linker = "rust-lld"

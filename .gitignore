@@ -1,0 +1,6 @@
+/target/
+pat.txt
+web-wasm/dist/
+**/*.rs.bk
+Cargo.lock
+build.log

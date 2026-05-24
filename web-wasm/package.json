@@ -1,0 +1,11 @@
+{
+  "name": "iceberg-db-web-wasm",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

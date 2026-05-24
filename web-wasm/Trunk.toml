@@ -1,0 +1,13 @@
+# `target` in Trunk means the HTML entry file (default: index.html), not the Rust wasm triple.
+[build]
+# Relative URLs so assets load when not served from domain root (Live Server, subpaths).
+public_url = "./"
+
+[serve]
+addresses = ["127.0.0.1"]
+port = 8080
+
+# Browser → same-origin /sf/... → snowflake-proxy.mjs → Snowflake (avoids CORS)
+[[proxy]]
+rewrite = "/sf/"
+backend = "http://127.0.0.1:8787/"

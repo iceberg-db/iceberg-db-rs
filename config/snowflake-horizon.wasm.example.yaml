@@ -1,0 +1,28 @@
+# Browser WASM: paste PAT into the UI (token field). Env vars like ${SNOWFLAKE_ACCESS_TOKEN} do not work in the tab.
+
+
+
+default-catalog: snowflake_horizon
+
+
+
+catalogs:
+
+  snowflake_horizon:
+
+    type: rest
+
+    profile: snowflake-horizon
+
+    uri: https://YOUR_ACCOUNT.snowflakecomputing.com/polaris/api/catalog
+
+    warehouse: ICEBERG_TEST
+
+    default-schema: iceberg_test
+
+    token: YOUR_PAT_HERE
+
+    scope: session:role:DATA_ENGINEER_ROLE
+
+    client.region: ap-southeast-7
+

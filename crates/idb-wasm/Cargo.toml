@@ -1,0 +1,35 @@
+[package]
+name = "idb-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "iceberg-db WebAssembly bindings"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["horizon"]
+# In-browser Snowflake Horizon IRC + demo memory tables.
+horizon = ["idb-sql/native", "idb-catalog/native", "dep:idb-config", "dep:idb-catalog"]
+demo = []
+
+[dependencies]
+anyhow.workspace = true
+console_error_panic_hook = "0.1"
+idb-sql = { path = "../idb-sql" }
+serde.workspace = true
+serde-wasm-bindgen = "0.6"
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+js-sys = "0.3"
+idb-config = { path = "../idb-config", optional = true }
+idb-catalog = { path = "../idb-catalog", default-features = false, optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+idb-catalog = { path = "../idb-catalog", default-features = false }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
+tokio = { workspace = true, default-features = false, features = ["rt", "sync", "macros"] }
+web-sys = { version = "0.3", features = ["console"] }
