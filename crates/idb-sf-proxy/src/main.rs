@@ -4,6 +4,7 @@
 use std::io::Read;
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use reqsign::{AwsCredential, AwsV4Signer};
@@ -64,6 +65,33 @@ fn with_cors<R: Read>(mut response: Response<R>, origin: Option<&str>) -> Respon
     response
 }
 
+/// `(request, error)` when forwarding fails before `Request::respond` consumes the request.
+type RequestErr = (tiny_http::Request, anyhow::Error);
+
+fn fail_req(request: tiny_http::Request, err: impl std::fmt::Display) -> RequestErr {
+    (request, anyhow::anyhow!("{err}"))
+}
+
+fn respond_and_finish<R: Read>(
+    request: tiny_http::Request,
+    response: Response<R>,
+    cors: Option<&str>,
+) -> Result<()> {
+    let response = with_cors(response, cors);
+    request.respond(response).map_err(|e| anyhow::anyhow!(e))
+}
+
+fn respond_proxy_error(
+    request: tiny_http::Request,
+    origin: Option<&str>,
+    err: impl std::fmt::Display,
+) -> Result<()> {
+    eprintln!("idb-sf-proxy: {err}");
+    let mut response = Response::from_string(format!("{err}")).with_status_code(StatusCode(502));
+    response = with_cors(response, origin);
+    request.respond(response).map_err(|e| anyhow::anyhow!(e))
+}
+
 fn main() -> Result<()> {
     let port = std::env::var("SNOWFLAKE_PROXY_PORT")
         .ok()
@@ -74,6 +102,8 @@ fn main() -> Result<()> {
     let client = Arc::new(
         Client::builder()
             .redirect(reqwest::redirect::Policy::limited(10))
+            .pool_max_idle_per_host(8)
+            .timeout(Duration::from_secs(600))
             .build()
             .context("build HTTP client")?,
     );
@@ -104,7 +134,7 @@ fn path_and_query(url: &str) -> (&str, Option<&str>) {
     }
 }
 
-fn handle(client: Arc<Client>, mut request: tiny_http::Request) -> Result<()> {
+fn handle(client: Arc<Client>, request: tiny_http::Request) -> Result<()> {
     let method = request.method().clone();
     let cors = cors_origin(&request);
     let request_url = request.url().to_string();
@@ -153,11 +183,32 @@ fn handle(client: Arc<Client>, mut request: tiny_http::Request) -> Result<()> {
         return handle_s3(client, request, query, cors);
     }
 
+    if let Err((request, e)) =
+        forward_snowflake(client, request, &method, path, query, cors.as_deref())
+    {
+        return respond_proxy_error(request, cors.as_deref(), e);
+    }
+    Ok(())
+}
+
+fn forward_snowflake(
+    client: Arc<Client>,
+    mut request: tiny_http::Request,
+    method: &Method,
+    path: &str,
+    query: Option<&str>,
+    cors: Option<&str>,
+) -> Result<(), RequestErr> {
     let mut segments = path.splitn(2, '/');
-    let account = segments
-        .next()
-        .filter(|s| !s.is_empty())
-        .context("missing account in path (expected /{account}/polaris/...)")?;
+    let account = match segments.next().filter(|s| !s.is_empty()) {
+        Some(a) => a,
+        None => {
+            return Err(fail_req(
+                request,
+                "missing account in path (expected /{account}/polaris/...)",
+            ));
+        }
+    };
     let rest = segments.next().unwrap_or("").to_string();
     let oauth_tokens = rest.contains("oauth/tokens");
 
@@ -176,7 +227,9 @@ fn handle(client: Arc<Client>, mut request: tiny_http::Request) -> Result<()> {
         .map(|h| h.value.as_str().to_string());
 
     let mut body = Vec::new();
-    request.as_reader().read_to_end(&mut body)?;
+    if let Err(e) = request.as_reader().read_to_end(&mut body) {
+        return Err(fail_req(request, e));
+    }
 
     if oauth_tokens {
         eprintln!(
@@ -222,7 +275,10 @@ fn handle(client: Arc<Client>, mut request: tiny_http::Request) -> Result<()> {
         req = req.body(body);
     }
 
-    let resp = req.send().context("upstream Snowflake request")?;
+    let resp = match req.send() {
+        Ok(r) => r,
+        Err(e) => return Err(fail_req(request, format!("upstream Snowflake request: {e}"))),
+    };
     let upstream_status = resp.status();
     let status = StatusCode(upstream_status.as_u16());
     let out_headers: Vec<Header> = resp
@@ -234,7 +290,10 @@ fn handle(client: Arc<Client>, mut request: tiny_http::Request) -> Result<()> {
         })
         .collect();
 
-    let bytes = resp.bytes().context("read upstream body")?;
+    let bytes = match resp.bytes() {
+        Ok(b) => b,
+        Err(e) => return Err(fail_req(request, format!("read upstream body: {e}"))),
+    };
     if oauth_tokens {
         eprintln!(
             "  oauth/tokens: upstream {upstream_status} body {} bytes",
@@ -245,9 +304,9 @@ fn handle(client: Arc<Client>, mut request: tiny_http::Request) -> Result<()> {
     for h in out_headers {
         response = response.with_header(h);
     }
-    let response = with_cors(response, cors.as_deref());
-
-    request.respond(response)?;
+    if let Err(e) = respond_and_finish(request, response, cors) {
+        eprintln!("idb-sf-proxy: respond failed: {e:#}");
+    }
     Ok(())
 }
 
@@ -265,16 +324,31 @@ struct S3SignedProxyBody {
 /// Browser sends JSON + vended creds; proxy signs and fetches S3 (no SigV4 headers in the browser).
 fn handle_s3_signed(
     client: Arc<Client>,
-    mut request: tiny_http::Request,
+    request: tiny_http::Request,
     cors: Option<String>,
 ) -> Result<()> {
+    match handle_s3_signed_impl(client, request, cors.as_deref()) {
+        Ok(()) => Ok(()),
+        Err((request, e)) => respond_proxy_error(request, cors.as_deref(), e),
+    }
+}
+
+fn handle_s3_signed_impl(
+    client: Arc<Client>,
+    mut request: tiny_http::Request,
+    cors: Option<&str>,
+) -> Result<(), RequestErr> {
     if request.method() != &Method::Post {
-        anyhow::bail!("_s3_signed expects POST");
+        return Err((request, anyhow::anyhow!("_s3_signed expects POST")));
     }
     let mut body = Vec::new();
-    request.as_reader().read_to_end(&mut body)?;
-    let body: S3SignedProxyBody =
-        serde_json::from_slice(&body).context("parse _s3_signed JSON body")?;
+    if let Err(e) = request.as_reader().read_to_end(&mut body) {
+        return Err(fail_req(request, e));
+    }
+    let body: S3SignedProxyBody = match serde_json::from_slice(&body) {
+        Ok(b) => b,
+        Err(e) => return Err(fail_req(request, format!("parse _s3_signed JSON body: {e}"))),
+    };
 
     let object = body
         .url
@@ -287,12 +361,16 @@ fn handle_s3_signed(
         "HEAD" => HttpMethod::HEAD,
         _ => HttpMethod::GET,
     };
-    let mut req = client
-        .request(http_method, &body.url)
-        .build()
-        .context("build S3 request")?;
+    let mut req = match client.request(http_method, &body.url).build() {
+        Ok(r) => r,
+        Err(e) => return Err(fail_req(request, format!("build S3 request: {e}"))),
+    };
     if let Some(range) = body.range.filter(|s| !s.is_empty()) {
-        req.headers_mut().insert(RANGE, HeaderValue::from_str(&range)?);
+        let range_val = match HeaderValue::from_str(&range) {
+            Ok(v) => v,
+            Err(e) => return Err(fail_req(request, format!("invalid Range header: {e}"))),
+        };
+        req.headers_mut().insert(RANGE, range_val);
     }
     let cred = AwsCredential {
         access_key_id: body.access_key_id,
@@ -301,11 +379,14 @@ fn handle_s3_signed(
         expires_in: None,
     };
     let signer = AwsV4Signer::new("s3", &body.region);
-    signer
-        .sign(&mut req, &cred)
-        .map_err(|e| anyhow::anyhow!("sigv4: {e}"))?;
+    if let Err(e) = signer.sign(&mut req, &cred) {
+        return Err(fail_req(request, format!("sigv4: {e}")));
+    }
 
-    let resp = client.execute(req).context("upstream S3 request")?;
+    let resp = match client.execute(req) {
+        Ok(r) => r,
+        Err(e) => return Err(fail_req(request, format!("upstream S3 request: {e}"))),
+    };
     let upstream_status = resp.status();
     let status = StatusCode(upstream_status.as_u16());
     let out_headers: Vec<Header> = resp
@@ -316,15 +397,19 @@ fn handle_s3_signed(
             Header::from_bytes(name.as_str().as_bytes(), value.as_bytes()).ok()
         })
         .collect();
-    let bytes = resp.bytes().context("read S3 body")?;
+    let bytes = match resp.bytes() {
+        Ok(b) => b,
+        Err(e) => return Err(fail_req(request, format!("read S3 body: {e}"))),
+    };
     eprintln!("  _s3_signed: upstream {upstream_status} {} bytes", bytes.len());
 
     let mut response = Response::from_data(bytes).with_status_code(status);
     for h in out_headers {
         response = response.with_header(h);
     }
-    let response = with_cors(response, cors.as_deref());
-    request.respond(response)?;
+    if let Err(e) = respond_and_finish(request, response, cors) {
+        eprintln!("  _s3_signed: respond failed: {e:#}");
+    }
     Ok(())
 }
 
@@ -344,22 +429,45 @@ fn query_param<'a>(query: Option<&'a str>, key: &str) -> Option<String> {
 /// Forward a browser-signed S3 GET/HEAD to the real object URL (no S3 CORS in dev).
 fn handle_s3(
     client: Arc<Client>,
-    mut request: tiny_http::Request,
+    request: tiny_http::Request,
     query: Option<&str>,
     cors: Option<String>,
 ) -> Result<()> {
-    let target = query_param(query, "u").context("_s3 missing query param u=<https://...>")?;
+    match handle_s3_impl(client, request, query, cors.as_deref()) {
+        Ok(()) => Ok(()),
+        Err((request, e)) => respond_proxy_error(request, cors.as_deref(), e),
+    }
+}
+
+fn handle_s3_impl(
+    client: Arc<Client>,
+    mut request: tiny_http::Request,
+    query: Option<&str>,
+    cors: Option<&str>,
+) -> Result<(), RequestErr> {
+    let inbound_method = request.method().clone();
+    let target = match query_param(query, "u") {
+        Some(t) => t,
+        None => {
+            return Err(fail_req(
+                request,
+                "_s3 missing query param u=<https://...>",
+            ));
+        }
+    };
     let target_host = target
         .split("://")
         .nth(1)
         .and_then(|rest| rest.split('/').next())
         .unwrap_or("s3");
-    eprintln!("{} _s3 → {}", request.method(), target_host);
+    eprintln!("{inbound_method} _s3 → {target_host}");
 
     let mut body = Vec::new();
-    request.as_reader().read_to_end(&mut body)?;
+    if let Err(e) = request.as_reader().read_to_end(&mut body) {
+        return Err(fail_req(request, e));
+    }
 
-    let mut req = client.request(map_method(request.method()), &target);
+    let mut req = client.request(map_method(&inbound_method), &target);
     if let Some(host) = target
         .split("://")
         .nth(1)
@@ -382,9 +490,11 @@ fn handle_s3(
         req = req.body(body);
     }
 
-    let resp = req.send().context("upstream S3 request")?;
-    let upstream_status = resp.status();
-    let status = StatusCode(upstream_status.as_u16());
+    let resp = match req.send() {
+        Ok(r) => r,
+        Err(e) => return Err(fail_req(request, format!("upstream S3 request: {e}"))),
+    };
+    let status = StatusCode(resp.status().as_u16());
     let out_headers: Vec<Header> = resp
         .headers()
         .iter()
@@ -394,13 +504,17 @@ fn handle_s3(
         })
         .collect();
 
-    let bytes = resp.bytes().context("read upstream S3 body")?;
+    let bytes = match resp.bytes() {
+        Ok(b) => b,
+        Err(e) => return Err(fail_req(request, format!("read upstream S3 body: {e}"))),
+    };
     let mut response = Response::from_data(bytes).with_status_code(status);
     for h in out_headers {
         response = response.with_header(h);
     }
-    let response = with_cors(response, cors.as_deref());
-    request.respond(response)?;
+    if let Err(e) = respond_and_finish(request, response, cors) {
+        eprintln!("  _s3: respond failed: {e:#}");
+    }
     Ok(())
 }
 

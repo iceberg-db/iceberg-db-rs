@@ -224,9 +224,14 @@ async fn open_rest(name: &str, spec: &CatalogSpec) -> Result<Arc<dyn Catalog>> {
 
     if is_snowflake {
         #[cfg(target_arch = "wasm32")]
-        props
-            .entry("s3.dev-proxy".to_string())
-            .or_insert_with(|| "http://127.0.0.1:8787".to_string());
+        {
+            props
+                .entry("s3.dev-proxy".to_string())
+                .or_insert_with(|| "http://127.0.0.1:8787".to_string());
+            props
+                .entry("s3.fetch-concurrency".to_string())
+                .or_insert_with(|| wasm_s3_storage::DEFAULT_WASM_S3_FETCH_CONCURRENCY.to_string());
+        }
         let bearer = snowflake_auth::exchange_pat(&rest_props).await.map_err(|e| {
             anyhow!(
                 "{e:#}\n\nHorizon hint: scope must match PAT ROLE_RESTRICTION exactly \

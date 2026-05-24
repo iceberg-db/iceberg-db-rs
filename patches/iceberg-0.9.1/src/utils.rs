@@ -17,10 +17,16 @@
 
 use std::num::NonZeroUsize;
 
-// Use a default value of 1 as the safest option.
+// Use a default value of 1 as the safest option on native targets.
 // See https://doc.rust-lang.org/std/thread/fn.available_parallelism.html#limitations
 // for more details.
+#[cfg(not(target_arch = "wasm32"))]
 const DEFAULT_PARALLELISM: usize = 1;
+
+/// Browser builds: `available_parallelism()` is often 1, but Iceberg scan/arrow
+/// layers should still fetch manifests and parquet byte ranges concurrently.
+#[cfg(target_arch = "wasm32")]
+const DEFAULT_PARALLELISM: usize = 6;
 
 /// Uses [`std::thread::available_parallelism`] in order to
 /// retrieve an estimate of the default amount of parallelism
