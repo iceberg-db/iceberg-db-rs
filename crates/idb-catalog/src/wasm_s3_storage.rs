@@ -4,6 +4,9 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 
+#[cfg(target_arch = "wasm32")]
+use tokio::sync::Semaphore;
+
 use async_trait::async_trait;
 use bytes::Bytes;
 use iceberg::io::{
@@ -41,10 +44,17 @@ impl WasmS3StorageFactory {
 impl StorageFactory for WasmS3StorageFactory {
     fn build(&self, config: &StorageConfig) -> Result<Arc<dyn Storage>> {
         let cfg = parse_s3_props(config.props().clone())?;
+        let fetch_limit = Arc::new(Semaphore::new(cfg.fetch_concurrency));
+        #[cfg(target_arch = "wasm32")]
+        wasm_log(&format!(
+            "idb_query: s3 fetch concurrency={}",
+            cfg.fetch_concurrency
+        ));
         Ok(Arc::new(WasmS3Storage {
             configured_scheme: self.configured_scheme.clone(),
             cfg,
             client: default_http_client(),
+            fetch_limit,
         }))
     }
 }
@@ -59,14 +69,45 @@ struct S3Props {
     path_style: bool,
     /// Local `idb-sf-proxy` base (e.g. http://127.0.0.1:8787) — forwards signed S3 reads.
     dev_proxy_base: Option<String>,
+    /// Max in-flight S3 HTTP requests for this table (manifest + parquet ranges).
+    fetch_concurrency: usize,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// Default parallel S3 GET cap for browser builds (see `s3.fetch-concurrency`).
+/// Browsers allow ~6 concurrent connections per host; :8787 is one host for all `_s3` calls.
+pub const DEFAULT_WASM_S3_FETCH_CONCURRENCY: usize = 6;
+
+#[derive(Clone, Debug, Serialize)]
 struct WasmS3Storage {
     configured_scheme: String,
     cfg: S3Props,
     #[serde(skip, default = "default_http_client")]
     client: Client,
+    #[serde(skip)]
+    fetch_limit: Arc<Semaphore>,
+}
+
+impl<'de> Deserialize<'de> for WasmS3Storage {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct WasmS3StorageData {
+            configured_scheme: String,
+            cfg: S3Props,
+            #[serde(skip, default = "default_http_client")]
+            client: Client,
+        }
+        let data = WasmS3StorageData::deserialize(deserializer)?;
+        let fetch_limit = Arc::new(Semaphore::new(data.cfg.fetch_concurrency));
+        Ok(WasmS3Storage {
+            configured_scheme: data.configured_scheme,
+            cfg: data.cfg,
+            client: data.client,
+            fetch_limit,
+        })
+    }
 }
 
 fn default_http_client() -> Client {
@@ -106,6 +147,11 @@ fn parse_s3_props(mut m: HashMap<String, String>) -> Result<S3Props> {
     let dev_proxy_base = m
         .remove("s3.dev-proxy")
         .filter(|s| !s.is_empty());
+    let fetch_concurrency = m
+        .remove("s3.fetch-concurrency")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_WASM_S3_FETCH_CONCURRENCY)
+        .clamp(1, 32);
 
     Ok(S3Props {
         endpoint,
@@ -115,6 +161,7 @@ fn parse_s3_props(mut m: HashMap<String, String>) -> Result<S3Props> {
         region,
         path_style,
         dev_proxy_base,
+        fetch_concurrency,
     })
 }
 
@@ -218,6 +265,12 @@ impl WasmS3Storage {
         url: Url,
         range: Option<Range<u64>>,
     ) -> Result<crate::wasm_local::WasmHttpResponse> {
+        let _permit = self.fetch_limit.acquire().await.map_err(|_| {
+            Error::new(
+                ErrorKind::Unexpected,
+                "s3 fetch concurrency semaphore closed",
+            )
+        })?;
         if self.cfg.dev_proxy_base.is_some() {
             return self
                 .signed_request_via_dev_proxy(method, url, range)
@@ -236,7 +289,7 @@ impl WasmS3Storage {
         let region = self.cfg.region.clone();
         let cred = self.credential();
         crate::wasm_local::run_local(async move {
-            let mut req = build_signed_s3_request(&client, &region, &cred, method, &url, range)?;
+            let req = build_signed_s3_request(&client, &region, &cred, method, &url, range)?;
             let resp = client
                 .execute(req)
                 .await
@@ -458,5 +511,32 @@ impl FileRead for WasmS3Reader {
             ));
         }
         Ok(resp.body)
+    }
+}
+
+#[cfg(all(test, target_arch = "wasm32"))]
+mod tests {
+    use super::*;
+
+    fn minimal_s3_props() -> HashMap<String, String> {
+        HashMap::from([
+            (S3_ACCESS_KEY_ID.to_string(), "AKIAKEY".to_string()),
+            (S3_SECRET_ACCESS_KEY.to_string(), "secret".to_string()),
+            (S3_REGION.to_string(), "us-east-1".to_string()),
+        ])
+    }
+
+    #[test]
+    fn parse_fetch_concurrency_defaults_to_six() {
+        let cfg = parse_s3_props(minimal_s3_props()).unwrap();
+        assert_eq!(cfg.fetch_concurrency, DEFAULT_WASM_S3_FETCH_CONCURRENCY);
+    }
+
+    #[test]
+    fn parse_fetch_concurrency_clamps() {
+        let mut props = minimal_s3_props();
+        props.insert("s3.fetch-concurrency".to_string(), "99".to_string());
+        let cfg = parse_s3_props(props).unwrap();
+        assert_eq!(cfg.fetch_concurrency, 32);
     }
 }

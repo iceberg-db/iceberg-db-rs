@@ -98,7 +98,7 @@ The UI talks to the proxy **directly on port 8787** (not Trunk `/sf/`). Some Tru
 
 `serve.ps1` builds and runs **`idb-sf-proxy`** on 8787. Optional Trunk `[[proxy]]` `/sf/` remains for curl tests only.
 
-**S3 reads:** Iceberg metadata and Parquet objects are fetched through the same proxy (`GET http://127.0.0.1:8787/_s3?u=…`) with SigV4 headers, so the browser never talks to `*.amazonaws.com` directly (no S3 CORS needed in dev).
+**S3 reads:** Iceberg metadata and Parquet objects are fetched through the same proxy (`GET http://127.0.0.1:8787/_s3?u=…`) with SigV4 headers, so the browser never talks to `*.amazonaws.com` directly (no S3 CORS needed in dev). Manifests and parquet byte ranges are fetched **in parallel** (default **6** in-flight GETs — matches the browser per-host connection limit; console: `idb_query: s3 fetch concurrency=6`). Override with `s3.fetch-concurrency` (1–32). If you see CORS errors on `_s3` under heavy load, keep concurrency ≤ 6 and restart `serve.ps1` (rebuilds the proxy).
 
 Alternative: native **`idb-cli`** (no CORS).
 
