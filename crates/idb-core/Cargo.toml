@@ -1,0 +1,12 @@
+[package]
+name = "idb-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+idb-catalog = { workspace = true, features = ["native"] }
+idb-config.workspace = true
+idb-sql = { workspace = true, features = ["native"] }
+tokio = { workspace = true, features = ["rt-multi-thread"] }

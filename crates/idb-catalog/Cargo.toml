@@ -1,0 +1,44 @@
+[package]
+name = "idb-catalog"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["native"]
+native = [
+  "dep:idb-config",
+  "dep:reqwest",
+  "dep:serde_json",
+]
+
+[dependencies]
+anyhow.workspace = true
+arrow-array = "57.1"
+arrow-schema = "57.1"
+async-trait = "0.1"
+bytes = "1"
+iceberg.workspace = true
+idb-config = { workspace = true, optional = true }
+parquet = "57.1"
+reqwest = { workspace = true, optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true, optional = true }
+typetag = "0.2"
+tracing.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+iceberg-catalog-rest = { workspace = true }
+iceberg-storage-opendal = { workspace = true, default-features = false, features = ["opendal-s3"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+futures = "0.3"
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["console"] }
+reqsign = { version = "0.16.5", default-features = false, features = ["reqwest_request", "rustls", "services-aws"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, default-features = false, features = ["sync"] }
+url = "2"
+urlencoding = "2"
+wasm-bindgen-futures = "0.4"

@@ -1,0 +1,7 @@
+default-catalog: local
+
+catalogs:
+  local:
+    type: hadoop
+    # Use env var, or a quoted path on Windows: "C:/Users/you/.iceberg-db/warehouse"
+    warehouse: ${ICEBERG_DB_WAREHOUSE}

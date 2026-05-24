@@ -1,0 +1,33 @@
+# Snowflake Horizon IRC + S3
+
+# Copy to %USERPROFILE%\.iceberg-db\config.yaml and set SNOWFLAKE_ACCESS_TOKEN.
+
+default-catalog: snowflake_horizon
+
+
+
+catalogs:
+
+  snowflake_horizon:
+
+    type: rest
+
+    profile: snowflake-horizon
+
+    uri: https://qtfneqx-er54214.snowflakecomputing.com/polaris/api/catalog
+
+    warehouse: ICEBERG_TEST   # Snowflake database name (URL prefix), not the SQL schema
+
+    token: ${SNOWFLAKE_ACCESS_TOKEN}
+
+    # Must match PAT ROLE_RESTRICTION exactly
+
+    scope: session:role:DATA_ENGINEER_ROLE
+
+    # Optional: only if your account requires client_id on OAuth (omit for PAT-only)
+
+    # username: YOUR_SNOWFLAKE_USER
+
+    client.region: ap-southeast-7
+
+
