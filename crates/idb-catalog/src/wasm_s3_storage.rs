@@ -265,6 +265,9 @@ impl WasmS3Storage {
         url: Url,
         range: Option<Range<u64>>,
     ) -> Result<crate::wasm_local::WasmHttpResponse> {
+        if method == Method::GET {
+            crate::wasm_query_io::record_s3_object_fetch(url.as_str());
+        }
         let _permit = self.fetch_limit.acquire().await.map_err(|_| {
             Error::new(
                 ErrorKind::Unexpected,
@@ -401,6 +404,7 @@ async fn wasm_response_from_reqwest(
         .bytes()
         .await
         .map_err(|e| Error::new(ErrorKind::Unexpected, format!("read body: {e}")))?;
+    crate::wasm_query_io::add_bytes_fetched(body.len() as u64);
     Ok(crate::wasm_local::WasmHttpResponse {
         status,
         body,

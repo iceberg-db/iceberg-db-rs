@@ -12,6 +12,8 @@ import assert from "node:assert/strict";
 
 import {
   escapeHtml,
+  formatBytes,
+  formatFetchProgress,
   formatCell,
   formatElapsedMs,
   jsNumber,
@@ -92,6 +94,25 @@ test("formatElapsedMs returns em-dash for invalid input", () => {
   assert.equal(formatElapsedMs(undefined), "—");
   assert.equal(formatElapsedMs(-1), "—");
   assert.equal(formatElapsedMs(Number.NaN), "—");
+});
+
+test("formatBytes formats sizes and invalid input", () => {
+  assert.equal(formatBytes(0), "0 B");
+  assert.equal(formatBytes(512), "512 B");
+  assert.equal(formatBytes(1024), "1 KB");
+  assert.equal(formatBytes(1536), "1.5 KB");
+  assert.equal(formatBytes(5 * 1024 * 1024), "5 MB");
+  assert.equal(formatBytes(12_345_678n), "11.8 MB");
+  assert.equal(formatBytes(null), "—");
+  assert.equal(formatBytes(-1), "—");
+});
+
+test("formatFetchProgress combines file count and bytes", () => {
+  assert.equal(formatFetchProgress(0, 0), "0 files · 0 B");
+  assert.equal(formatFetchProgress(1, 1024), "1 file · 1 KB");
+  assert.equal(formatFetchProgress(3, 5 * 1024 * 1024), "3 files · 5 MB");
+  assert.equal(formatFetchProgress(null, 1024), "1 KB");
+  assert.equal(formatFetchProgress(2, null), "2 files");
 });
 
 test("escapeHtml escapes the standard 4 chars", () => {

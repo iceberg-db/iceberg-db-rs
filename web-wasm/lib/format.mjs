@@ -50,6 +50,44 @@ export function formatElapsedMs(ms) {
   return `${s}s`;
 }
 
+/**
+ * Format a byte count for the status bar (binary KB/MB/GB).
+ * Returns the em-dash `—` for null/undefined/negative/NaN inputs.
+ */
+export function formatBytes(bytes) {
+  const n = jsNumber(bytes);
+  if (!Number.isFinite(n) || n < 0) return "—";
+  if (n === 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let v = n;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  if (i === 0) return `${Math.round(v)} B`;
+  const rounded = v >= 100 ? Math.round(v) : v >= 10 ? Math.round(v * 10) / 10 : Math.round(v * 100) / 100;
+  return `${rounded} ${units[i]}`;
+}
+
+/**
+ * Status-bar text for live/completed fetch I/O: `3 files · 1.2 MB`.
+ * Invalid file count falls back to bytes only; invalid bytes shows files only when known.
+ */
+export function formatFetchProgress(files, bytes) {
+  const f = jsNumber(files);
+  const b = formatBytes(bytes);
+  const filesOk = Number.isFinite(f) && f >= 0;
+  const bytesOk = b !== "—";
+  if (!filesOk && !bytesOk) return "—";
+  if (!filesOk) return b;
+  if (!bytesOk) {
+    return f === 1 ? "1 file" : `${Math.round(f)} files`;
+  }
+  const fileLabel = f === 1 ? "1 file" : `${Math.round(f)} files`;
+  return `${fileLabel} · ${b}`;
+}
+
 /** HTML-escape an arbitrary value for safe interpolation in `innerHTML`. */
 export function escapeHtml(value) {
   return String(value)

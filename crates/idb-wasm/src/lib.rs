@@ -121,6 +121,26 @@ pub fn idb_query(sql: String) -> js_sys::Promise {
     })
 }
 
+/// Live HTTP/S3 bytes read for the in-flight query (poll from JS while `idb_query` runs).
+#[wasm_bindgen]
+pub fn idb_bytes_fetched() -> u64 {
+    #[cfg(all(target_arch = "wasm32", feature = "horizon"))]
+    {
+        return idb_catalog::bytes_fetched();
+    }
+    0
+}
+
+/// Distinct S3 objects fetched so far for the in-flight query (poll from JS).
+#[wasm_bindgen]
+pub fn idb_files_fetched() -> u64 {
+    #[cfg(all(target_arch = "wasm32", feature = "horizon"))]
+    {
+        return idb_catalog::files_fetched();
+    }
+    0
+}
+
 async fn init_demo() -> Result<JsValue, JsValue> {
     #[cfg(target_arch = "wasm32")]
     log_init("demo tables");
@@ -169,6 +189,8 @@ async fn run_query(sql: String) -> Result<JsValue, JsValue> {
 
     #[cfg(target_arch = "wasm32")]
     {
+        #[cfg(feature = "horizon")]
+        idb_catalog::reset_bytes_fetched();
         log_query(&format!("start: {}", truncate_log(&sql, 80)));
         log_query("entering DataFusion session.query");
     }
@@ -178,8 +200,8 @@ async fn run_query(sql: String) -> Result<JsValue, JsValue> {
     #[cfg(target_arch = "wasm32")]
     {
         log_query(&format!(
-            "done: {} row(s) in {} ms",
-            result.row_count, result.elapsed_ms
+            "done: {} row(s) in {} ms, {} file(s), {} bytes fetched",
+            result.row_count, result.elapsed_ms, result.files_fetched, result.bytes_fetched
         ));
         log_query("serializing for UI");
     }
@@ -202,6 +224,8 @@ fn truncate_log(s: &str, max: usize) -> String {
 struct QueryResponse {
     row_count: usize,
     elapsed_ms: u64,
+    bytes_fetched: u64,
+    files_fetched: u64,
     columns: Vec<ColumnDto>,
     rows: Vec<Vec<String>>,
     text: String,
@@ -241,6 +265,8 @@ impl QueryResponse {
             return Ok(Self {
                 row_count: result.row_count,
                 elapsed_ms: result.elapsed_ms,
+                bytes_fetched: result.bytes_fetched,
+                files_fetched: result.files_fetched,
                 columns: result
                     .columns
                     .iter()
@@ -260,6 +286,8 @@ impl QueryResponse {
             Ok(Self {
                 row_count: result.row_count,
                 elapsed_ms: result.elapsed_ms,
+                bytes_fetched: result.bytes_fetched,
+                files_fetched: result.files_fetched,
                 columns: result
                     .columns
                     .iter()

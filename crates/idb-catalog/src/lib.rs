@@ -19,6 +19,13 @@ mod snowflake_auth;
 mod wasm_local;
 #[cfg(all(feature = "native", target_arch = "wasm32"))]
 mod wasm_s3_storage;
+#[cfg(all(feature = "native", target_arch = "wasm32"))]
+mod wasm_query_io;
+
+#[cfg(all(feature = "native", target_arch = "wasm32"))]
+pub use wasm_query_io::{
+    add_bytes_fetched, bytes_fetched, files_fetched, record_s3_object_fetch, reset_bytes_fetched,
+};
 
 #[cfg(feature = "native")]
 use std::collections::HashMap;
