@@ -19,12 +19,18 @@ mod snowflake_auth;
 mod wasm_local;
 #[cfg(all(feature = "native", target_arch = "wasm32"))]
 mod wasm_s3_storage;
-#[cfg(all(feature = "native", target_arch = "wasm32"))]
+#[cfg(feature = "native")]
 mod wasm_query_io;
+#[cfg(feature = "native")]
+mod byte_cache;
+#[cfg(feature = "native")]
+mod caching_storage;
 
-#[cfg(all(feature = "native", target_arch = "wasm32"))]
+#[cfg(feature = "native")]
 pub use wasm_query_io::{
-    add_bytes_fetched, bytes_fetched, files_fetched, record_s3_object_fetch, reset_bytes_fetched,
+    add_bytes_fetched, byte_cache_hits, byte_cache_misses, bytes_fetched, files_fetched,
+    query_cancelled, record_s3_object_fetch, request_query_cancel, reset_bytes_fetched,
+    reset_query_state,
 };
 
 #[cfg(feature = "native")]
@@ -47,9 +53,9 @@ use iceberg_catalog_rest::{RestCatalogBuilder, REST_CATALOG_PROP_URI, REST_CATAL
 #[cfg(all(feature = "native", target_arch = "wasm32"))]
 use rest_types::{REST_CATALOG_PROP_URI, REST_CATALOG_PROP_WAREHOUSE};
 #[cfg(all(feature = "native", not(target_arch = "wasm32")))]
-use iceberg_storage_opendal::OpenDalStorageFactory;
+use caching_storage::CachingOpenDalS3Factory;
 #[cfg(all(feature = "native", target_arch = "wasm32"))]
-use wasm_s3_storage::WasmS3StorageFactory;
+use caching_storage::CachingWasmS3Factory;
 #[cfg(feature = "native")]
 use rest_vended::VendedRestCatalog;
 #[cfg(feature = "native")]
@@ -99,13 +105,22 @@ impl CatalogRegistry {
 
     #[cfg(not(target_arch = "wasm32"))]
     pub async fn from_file_warehouse(catalog_name: &str, warehouse: &Path) -> Result<Self> {
+        Self::from_file_warehouse_with_schema(catalog_name, warehouse, "public").await
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn from_file_warehouse_with_schema(
+        catalog_name: &str,
+        warehouse: &Path,
+        default_schema: &str,
+    ) -> Result<Self> {
         let warehouse = warehouse
             .canonicalize()
             .unwrap_or_else(|_| warehouse.to_path_buf());
         let catalog = open_file_warehouse_path(catalog_name, &warehouse).await?;
         Ok(Self {
             default_name: catalog_name.to_string(),
-            default_schema: "public".to_string(),
+            default_schema: default_schema.to_string(),
             catalogs: HashMap::from([(catalog_name.to_string(), catalog)]),
         })
     }
@@ -213,13 +228,14 @@ async fn open_rest(name: &str, spec: &CatalogSpec) -> Result<Arc<dyn Catalog>> {
             .or_insert(schema);
     }
 
+    let cache = byte_cache::open_byte_cache(&props);
+    byte_cache::install_global_byte_cache(cache, &props);
+
     #[cfg(not(target_arch = "wasm32"))]
-    let storage_factory: Arc<dyn StorageFactory> = Arc::new(OpenDalStorageFactory::S3 {
-        configured_scheme: "s3".to_string(),
-        customized_credential_load: None,
-    });
+    let storage_factory: Arc<dyn StorageFactory> =
+        Arc::new(CachingOpenDalS3Factory::s3());
     #[cfg(target_arch = "wasm32")]
-    let storage_factory: Arc<dyn StorageFactory> = Arc::new(WasmS3StorageFactory::s3());
+    let storage_factory: Arc<dyn StorageFactory> = Arc::new(CachingWasmS3Factory::s3());
 
     let mut rest_props = props.clone();
     rest_props.remove("header.X-Iceberg-Access-Delegation");

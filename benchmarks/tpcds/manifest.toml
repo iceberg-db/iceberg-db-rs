@@ -1,0 +1,24 @@
+# TPC-DS query suite for idb-bench
+# Full set: run scripts/fetch-tpcds-queries.ps1 (queries q01–q99)
+
+suite = "tpcds"
+version = 1
+
+[[query]]
+id = "q01"
+file = "queries/q01.sql"
+
+[[query]]
+id = "q02"
+file = "queries/q02.sql"
+
+[[query]]
+id = "q03"
+file = "queries/q03.sql"
+
+[[query]]
+id = "q07"
+file = "queries/q07.sql"
+
+# Add q04–q99 after: .\scripts\fetch-tpcds-queries.ps1
+# Then extend this manifest with [[query]] entries for each file.

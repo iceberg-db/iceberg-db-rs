@@ -201,6 +201,10 @@ pub fn resolve_path(base: &str, path: &str) -> String {
     if path.is_empty() {
         return path.to_string();
     }
+    // Spark/Iceberg on Windows often emit `file:/C:/...` (not `file:///...`).
+    if let Some(local) = file_uri_to_local_path(path) {
+        return local;
+    }
     if path.contains("://") || is_absolute_path(path) {
         return path.replace('\\', "/");
     }
@@ -215,6 +219,16 @@ fn is_absolute_path(path: &str) -> bool {
             .chars()
             .nth(1)
             .is_some_and(|c| c == ':')
+}
+
+/// Converts `file:` URIs (including Spark's `file:/C:/...`) to a local path for `LocalFsStorage`.
+fn file_uri_to_local_path(path: &str) -> Option<String> {
+    let rest = path.strip_prefix("file:")?;
+    let local = rest.trim_start_matches('/').replace('\\', "/");
+    if local.is_empty() {
+        return None;
+    }
+    Some(local)
 }
 
 #[cfg(test)]
@@ -279,6 +293,26 @@ mod tests {
         assert_eq!(
             resolve_path(base, "data-1.parquet"),
             "C:/warehouse/demo/customers/data-1.parquet"
+        );
+    }
+
+    #[test]
+    fn normalizes_spark_file_uri_on_windows() {
+        let base = "C:/warehouse/tpcds/store_sales";
+        let spark = "file:/C:/warehouse/tpcds/store_sales/metadata/snap.avro";
+        assert_eq!(
+            resolve_path(base, spark),
+            "C:/warehouse/tpcds/store_sales/metadata/snap.avro"
+        );
+    }
+
+    #[test]
+    fn normalizes_file_triple_slash_uri() {
+        let base = "C:/warehouse/tpcds/store_sales";
+        let uri = "file:///C:/warehouse/tpcds/store_sales/data/part-00000.parquet";
+        assert_eq!(
+            resolve_path(base, uri),
+            "C:/warehouse/tpcds/store_sales/data/part-00000.parquet"
         );
     }
 }

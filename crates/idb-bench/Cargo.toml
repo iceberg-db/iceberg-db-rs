@@ -1,0 +1,31 @@
+[package]
+name = "idb-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "TPC-DS and other benchmarks: iceberg-db-rs vs DuckDB"
+
+[[bin]]
+name = "idb-bench"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+async-trait = "0.1"
+clap.workspace = true
+idb-core.workspace = true
+idb-config.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+serde_yaml = "0.9"
+toml = "0.8"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+regex = "1"
+
+duckdb = { version = "1.1", features = ["bundled"], optional = true }
+
+[features]
+default = ["duckdb-engine"]
+duckdb-engine = ["dep:duckdb"]
