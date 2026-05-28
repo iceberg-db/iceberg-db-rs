@@ -17,6 +17,7 @@ Rust SQL engine over Apache Iceberg (browser/WASM target), developed **in parall
 | `idb-sql` | DataFusion `SessionContext` + `IcebergCatalogProvider` |
 | `idb-core` | `Engine` facade |
 | `idb-cli` | Native binary `idb` |
+| `idb-bench` | TPC-DS benchmarks vs DuckDB (`idb-bench`) |
 | `idb-wasm` | WASM stub (browser phase 3) |
 
 ## Build & run (native)
@@ -34,6 +35,23 @@ cargo run -p idb-cli -- -c config/local-hadoop.yaml -e "SELECT 1"
 ```
 
 Seed demo tables with the Java seeder into the same warehouse path, then query from Rust.
+
+## Benchmarks (TPC-DS vs DuckDB)
+
+The [`idb-bench`](crates/idb-bench) crate runs the [TPC-DS](https://www.tpc.org/tpcds/) query suite against **iceberg-db-rs** (Iceberg warehouse) and **DuckDB** (Parquet), then prints a comparison table.
+
+```powershell
+# From repository root (not web-wasm/)
+.\scripts\fetch-tpcds-queries.ps1
+
+Copy-Item benchmarks/tpcds/bench.example.yaml benchmarks/tpcds/bench.yaml
+# edit warehouse + duckdb.parquet_root in bench.yaml
+
+cargo run -p idb-bench --release -- --config benchmarks/tpcds/bench.yaml
+cargo run -p idb-bench --release -- --config benchmarks/tpcds/bench.yaml --json tpcds-report.json
+```
+
+See [benchmarks/tpcds/README.md](benchmarks/tpcds/README.md) for data layout and manifest format.
 
 ## Tests
 

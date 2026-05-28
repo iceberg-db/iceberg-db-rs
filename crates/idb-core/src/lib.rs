@@ -25,7 +25,17 @@ impl Engine {
     }
 
     pub async fn from_warehouse(warehouse: &Path, catalog_name: &str) -> Result<Self> {
-        let registry = CatalogRegistry::from_file_warehouse(catalog_name, warehouse).await?;
+        Self::from_warehouse_with_schema(warehouse, catalog_name, "public").await
+    }
+
+    pub async fn from_warehouse_with_schema(
+        warehouse: &Path,
+        catalog_name: &str,
+        default_schema: &str,
+    ) -> Result<Self> {
+        let registry =
+            CatalogRegistry::from_file_warehouse_with_schema(catalog_name, warehouse, default_schema)
+                .await?;
         let session = SqlSession::from_registry(&registry).await?;
         Ok(Self { registry, session })
     }

@@ -6,6 +6,7 @@ members = [
   "crates/idb-sql",
   "crates/idb-core",
   "crates/idb-cli",
+  "crates/idb-bench",
   "crates/idb-wasm",
   "crates/idb-sf-proxy",
 ]
@@ -43,6 +44,7 @@ idb-config = { path = "crates/idb-config" }
 idb-catalog = { path = "crates/idb-catalog", default-features = false }
 idb-sql = { path = "crates/idb-sql" }
 idb-core = { path = "crates/idb-core" }
+idb-bench = { path = "crates/idb-bench" }
 
 # Requires patches/iceberg-0.9.1 (run web-wasm\serve.ps1 or scripts\vendor-iceberg-patch.ps1 once)
 [patch.crates-io]

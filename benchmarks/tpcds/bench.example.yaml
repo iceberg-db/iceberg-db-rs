@@ -1,0 +1,21 @@
+# Copy to bench.yaml and set paths for your machine.
+#
+# Iceberg: Hadoop-style warehouse with namespace `tpcds` and Iceberg metadata per table
+#   (same layout as Java iceberg-db TPC-DS seeder).
+# DuckDB: Parquet files under parquet_root/{table_name}/*.parquet
+
+warehouse: /absolute/path/to/tpcds_iceberg_warehouse
+catalog: local
+schema: tpcds
+
+# Optional REST catalog instead of warehouse:
+# iceberg_config: /absolute/path/to/config.yaml
+
+manifest: benchmarks/tpcds/manifest.toml
+iterations: 1
+warmup: true
+
+duckdb:
+  parquet_root: /absolute/path/to/tpcds_parquet
+  schema: tpcds
+  # database: /tmp/tpcds.duckdb
