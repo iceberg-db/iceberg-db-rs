@@ -62,6 +62,7 @@ async fn from_response(resp: reqwest::Response) -> anyhow::Result<WasmHttpRespon
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse::<u64>().ok());
     let body = resp.bytes().await.context("read HTTP body")?;
+    crate::wasm_query_io::add_bytes_fetched(body.len() as u64);
     Ok(WasmHttpResponse {
         status,
         body,

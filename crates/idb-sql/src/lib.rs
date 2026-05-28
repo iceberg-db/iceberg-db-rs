@@ -60,6 +60,10 @@ pub struct QueryResult {
     pub batches: Vec<RecordBatch>,
     pub row_count: usize,
     pub elapsed_ms: u64,
+    /// HTTP/S3 response bytes read during this query (WASM Horizon; 0 for demo/native).
+    pub bytes_fetched: u64,
+    /// Distinct S3 objects fetched (WASM Horizon; 0 for demo/native).
+    pub files_fetched: u64,
 }
 
 pub struct SqlSession {
@@ -142,6 +146,8 @@ warehouse = database name, and scope session:role:<role> matching the PAT."
     }
 
     pub async fn query(&self, sql: &str) -> Result<QueryResult> {
+        #[cfg(all(target_arch = "wasm32", feature = "native"))]
+        idb_catalog::reset_bytes_fetched();
         let started = QueryTimer::start();
         if let Some(schema) = parse_show_tables(sql) {
             let schema = schema.unwrap_or_else(|| self.default_schema.clone());
@@ -175,6 +181,8 @@ warehouse = database name, and scope session:role:<role> matching the PAT."
             batches,
             row_count,
             elapsed_ms: started.elapsed_ms(),
+            bytes_fetched: query_bytes_fetched(),
+            files_fetched: query_files_fetched(),
         })
     }
 
@@ -250,6 +258,8 @@ warehouse = database name, and scope session:role:<role> matching the PAT."
             batches: vec![batch],
             row_count,
             elapsed_ms: started.elapsed_ms(),
+            bytes_fetched: query_bytes_fetched(),
+            files_fetched: query_files_fetched(),
         })
     }
 
@@ -267,6 +277,24 @@ warehouse = database name, and scope session:role:<role> matching the PAT."
         }
         Ok(lines.join("\n"))
     }
+}
+
+fn query_bytes_fetched() -> u64 {
+    #[cfg(all(target_arch = "wasm32", feature = "native"))]
+    {
+        return idb_catalog::bytes_fetched();
+    }
+    #[cfg(not(all(target_arch = "wasm32", feature = "native")))]
+    0
+}
+
+fn query_files_fetched() -> u64 {
+    #[cfg(all(target_arch = "wasm32", feature = "native"))]
+    {
+        return idb_catalog::files_fetched();
+    }
+    #[cfg(not(all(target_arch = "wasm32", feature = "native")))]
+    0
 }
 
 struct QueryTimer {

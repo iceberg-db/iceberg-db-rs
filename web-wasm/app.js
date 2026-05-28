@@ -8,6 +8,8 @@
 
 import {
   escapeHtml,
+  formatBytes,
+  formatFetchProgress,
   formatCell,
   formatElapsedMs,
   jsNumber,
@@ -87,6 +89,7 @@ let activeSchema = HORIZON_SCHEMA;
 let activeSampleQueries = HORIZON_QUERIES;
 let queryRunning = false;
 let queryTimerInterval = null;
+let queryBytesInterval = null;
 
 // ---------------------------------------------------------------------------
 // DOM helpers
@@ -383,7 +386,7 @@ function renderGrid(result) {
   wrap.appendChild(table);
 }
 
-function setStatus({ message, kind = "muted", rows, ms }) {
+function setStatus({ message, kind = "muted", rows, files, bytes, ms }) {
   const el = $("status-message");
   el.className = `status-message${
     kind === "ok" ? " status-ok" : kind === "err" ? " status-err" : ""
@@ -391,6 +394,11 @@ function setStatus({ message, kind = "muted", rows, ms }) {
   el.textContent = message;
   el.title = message;
   $("status-rows").textContent = rows != null ? `${jsNumber(rows)} row(s)` : "—";
+  if (files != null || bytes != null) {
+    $("status-bytes").textContent = formatFetchProgress(files, bytes);
+  } else if (!queryRunning) {
+    $("status-bytes").textContent = "—";
+  }
   if (ms != null) {
     $("status-time").textContent = formatElapsedMs(ms);
   } else if (!queryRunning) {
@@ -416,6 +424,36 @@ function stopQueryElapsedTimer() {
     queryTimerInterval = null;
   }
   $("status-time")?.closest(".statusbar")?.classList.remove("statusbar-running");
+}
+
+function readLiveFetchStats() {
+  const bytesFn = window.__idb?.idb_bytes_fetched;
+  const filesFn = window.__idb?.idb_files_fetched;
+  if (typeof bytesFn !== "function" || typeof filesFn !== "function") {
+    return null;
+  }
+  return { files: filesFn(), bytes: bytesFn() };
+}
+
+function startQueryBytesPoller() {
+  stopQueryBytesPoller();
+  const el = $("status-bytes");
+  el.textContent = formatFetchProgress(0, 0);
+  const tick = () => {
+    const stats = readLiveFetchStats();
+    if (stats != null) {
+      el.textContent = formatFetchProgress(stats.files, stats.bytes);
+    }
+  };
+  tick();
+  queryBytesInterval = setInterval(tick, 400);
+}
+
+function stopQueryBytesPoller() {
+  if (queryBytesInterval != null) {
+    clearInterval(queryBytesInterval);
+    queryBytesInterval = null;
+  }
 }
 
 function setQueryStep(step) {
@@ -473,6 +511,7 @@ async function runQuery() {
   setStatus({ message: "Running…", kind: "muted" });
   const t0 = performance.now();
   startQueryElapsedTimer(t0);
+  startQueryBytesPoller();
 
   const queryPromise = idb_query(sql);
 
@@ -507,6 +546,8 @@ async function runQuery() {
       message: "Completed",
       kind: "ok",
       rows: result.row_count,
+      files: result.files_fetched,
+      bytes: result.bytes_fetched,
       ms: result.elapsed_ms,
     });
     switchResultsTab("grid");
@@ -524,6 +565,7 @@ async function runQuery() {
     switchResultsTab("text");
   } finally {
     stopQueryElapsedTimer();
+    stopQueryBytesPoller();
     queryRunning = false;
     setRunning(false);
   }
@@ -641,8 +683,22 @@ async function boot() {
   syncLineNumbers();
 
   const bindings = await loadWasm();
-  const { idb_init_horizon, idb_init_demo, idb_query, idb_wasm_version } = bindings;
-  window.__idb = { idb_init_horizon, idb_init_demo, idb_query, idb_wasm_version };
+  const {
+    idb_init_horizon,
+    idb_init_demo,
+    idb_query,
+    idb_bytes_fetched,
+    idb_files_fetched,
+    idb_wasm_version,
+  } = bindings;
+  window.__idb = {
+    idb_init_horizon,
+    idb_init_demo,
+    idb_query,
+    idb_bytes_fetched,
+    idb_files_fetched,
+    idb_wasm_version,
+  };
 
   const wasmVer = idb_wasm_version();
   console.info("[iceberg-db] wasm build", wasmVer);
