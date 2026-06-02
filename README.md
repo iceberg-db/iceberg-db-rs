@@ -1,12 +1,12 @@
 # iceberg-db-rs
 
-Rust SQL engine over Apache Iceberg (browser/WASM target), developed **in parallel** with the Java [`iceberg-db`](../iceberg-db) project.
+Rust SQL engine over Apache Iceberg (browser/WASM target).
 
 ## Stack
 
 - **SQL → plan → execution:** [Apache DataFusion](https://arrow.apache.org/datafusion/)
 - **Iceberg:** [iceberg-rust](https://github.com/apache/iceberg-rust) + [iceberg-datafusion](https://crates.io/crates/iceberg-datafusion)
-- **Config:** YAML compatible with Java `~/.iceberg-db/config.yaml`
+- **Config:** YAML via `~/.iceberg-db/config.yaml`
 
 ## Crates
 
@@ -26,7 +26,7 @@ Rust SQL engine over Apache Iceberg (browser/WASM target), developed **in parall
 cd iceberg-db-rs
 cargo build -p idb-cli
 
-# Local warehouse (same layout as Java HadoopCatalog tests)
+# Local warehouse
 export ICEBERG_DB_WAREHOUSE=/path/to/warehouse   # optional if using -w
 cargo run -p idb-cli -- -w /path/to/warehouse -e "SELECT COUNT(*) FROM demo.customers"
 
@@ -34,7 +34,7 @@ cargo run -p idb-cli -- -w /path/to/warehouse -e "SELECT COUNT(*) FROM demo.cust
 cargo run -p idb-cli -- -c config/local-hadoop.yaml -e "SELECT 1"
 ```
 
-Seed demo tables with the Java seeder into the same warehouse path, then query from Rust.
+Seed demo tables into the same warehouse path, then query from Rust.
 
 ## Benchmarks (TPC-DS vs DuckDB)
 
@@ -75,12 +75,3 @@ workspace UI.
 2. **P1:** SQL compliance tests shared with `iceberg-db-sqltest`
 3. **P2:** filter/projection pushdown parity
 4. **P3:** `idb-wasm` + browser extension UI (Snowsight-lite)
-
-## Java vs Rust
-
-| | Java `iceberg-db` | `iceberg-db-rs` |
-|--|-------------------|-----------------|
-| Planner | Calcite | DataFusion |
-| Browser | Not targeted | WASM + extension |
-| JDBC | Yes | No (planned: local agent only) |
-| Local warehouse | HadoopCatalog | `MemoryCatalog` + warehouse path (v0) |
