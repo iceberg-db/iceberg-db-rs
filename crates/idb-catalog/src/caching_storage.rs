@@ -11,7 +11,7 @@ use iceberg::Result;
 use iceberg_storage_opendal::OpenDalStorageFactory;
 
 #[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct CachingOpenDalS3Factory {
     inner: OpenDalStorageFactory,
 }
