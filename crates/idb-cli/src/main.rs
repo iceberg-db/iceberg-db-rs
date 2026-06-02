@@ -4,6 +4,7 @@ use anyhow::Result;
 use clap::Parser;
 use idb_config::default_config_path;
 use idb_core::Engine;
+use idb_sql::SessionOptions;
 
 #[derive(Parser)]
 #[command(name = "idb", about = "iceberg-db Rust SQL engine (native)")]
@@ -20,13 +21,25 @@ struct Args {
     #[arg(long, default_value = "local")]
     catalog: String,
 
+    /// Default schema / Iceberg namespace when using --warehouse (e.g. `tpcds`)
+    #[arg(long, default_value = "public")]
+    schema: String,
+
     /// Run a single SQL statement and print row count
     #[arg(short, long)]
     execute: Option<String>,
 
-    /// Print logical plan instead of executing
+    /// Print logical + physical plan (EXPLAIN)
     #[arg(long)]
     explain: bool,
+
+    /// Print plan with runtime metrics (EXPLAIN ANALYZE)
+    #[arg(long)]
+    explain_analyze: bool,
+
+    /// DataFusion target_partitions (parallelism for joins/aggregations).
+    #[arg(long)]
+    target_partitions: Option<usize>,
 
     /// Log each HTTP request to the REST catalog (secrets redacted)
     #[arg(long)]
@@ -46,12 +59,23 @@ async fn main() -> Result<()> {
         eprintln!("HTTP logging enabled (secrets redacted).");
     }
 
+    let session_options = SessionOptions {
+        target_partitions: args.target_partitions,
+        ..Default::default()
+    };
+
     let engine = if let Some(warehouse) = args.warehouse {
         eprintln!(
             "Using Hadoop-style warehouse: {}",
             warehouse.display()
         );
-        Engine::from_warehouse(&warehouse, &args.catalog).await?
+        Engine::from_warehouse_with_options(
+            &warehouse,
+            &args.catalog,
+            &args.schema,
+            session_options,
+        )
+        .await?
     } else {
         let config = args.config.unwrap_or_else(default_config_path);
         eprintln!("Using config: {}", config.display());
@@ -69,7 +93,7 @@ async fn main() -> Result<()> {
                 spec.catalog_type
             );
         }
-        Engine::from_config_file(&config).await?
+        Engine::from_config_with_options(cfg, session_options).await?
     };
 
     let sql = match args.execute {
@@ -80,7 +104,9 @@ async fn main() -> Result<()> {
         }
     };
 
-    if args.explain {
+    if args.explain_analyze {
+        println!("{}", engine.explain_analyze(&sql).await?);
+    } else if args.explain {
         println!("{}", engine.explain(&sql).await?);
     } else {
         let result = engine.query(&sql).await?;

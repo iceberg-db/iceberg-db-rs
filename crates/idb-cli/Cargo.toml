@@ -14,5 +14,6 @@ clap.workspace = true
 datafusion.workspace = true
 idb-config.workspace = true
 idb-core.workspace = true
+idb-sql = { workspace = true, features = ["native"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 tracing-subscriber.workspace = true

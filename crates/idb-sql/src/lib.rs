@@ -1,11 +1,14 @@
 //! DataFusion SQL session over Iceberg catalogs.
 
 mod case_insensitive;
+mod session_options;
 
 #[cfg(target_arch = "wasm32")]
 mod wasm_demo;
 #[cfg(all(target_arch = "wasm32", feature = "native"))]
 mod wasm_lazy_catalog;
+
+pub use session_options::SessionOptions;
 
 use std::sync::Arc;
 
@@ -84,6 +87,14 @@ impl SqlSession {
 
     #[cfg(feature = "native")]
     pub async fn from_registry(registry: &CatalogRegistry) -> Result<Self> {
+        Self::from_registry_with_options(registry, SessionOptions::default()).await
+    }
+
+    #[cfg(feature = "native")]
+    pub async fn from_registry_with_options(
+        registry: &CatalogRegistry,
+        options: SessionOptions,
+    ) -> Result<Self> {
         let default_catalog = registry.default_name().to_string();
         let default_schema = registry.default_schema().to_string();
         let iceberg_catalog = registry.default();
@@ -98,7 +109,8 @@ impl SqlSession {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            Self::from_iceberg_catalog(default_catalog, default_schema, iceberg_catalog).await
+            Self::open_iceberg_catalog(default_catalog, default_schema, iceberg_catalog, options)
+                .await
         }
     }
 
@@ -107,11 +119,45 @@ impl SqlSession {
         default_schema: String,
         iceberg_catalog: Arc<dyn Catalog>,
     ) -> Result<Self> {
-        let config = SessionConfig::new()
-            .with_information_schema(true)
-            .with_create_default_catalog_and_schema(false)
-            .with_default_catalog_and_schema(&catalog_name, &default_schema);
-        let ctx = SessionContext::new_with_config(config);
+        Self::open_iceberg_catalog(
+            catalog_name,
+            default_schema,
+            iceberg_catalog,
+            SessionOptions::default(),
+        )
+        .await
+    }
+
+    pub async fn from_iceberg_catalog_with_options(
+        catalog_name: String,
+        default_schema: String,
+        iceberg_catalog: Arc<dyn Catalog>,
+        options: SessionOptions,
+    ) -> Result<Self> {
+        Self::open_iceberg_catalog(catalog_name, default_schema, iceberg_catalog, options).await
+    }
+
+    async fn open_iceberg_catalog(
+        catalog_name: String,
+        default_schema: String,
+        iceberg_catalog: Arc<dyn Catalog>,
+        options: SessionOptions,
+    ) -> Result<Self> {
+        let config = session_options::apply_to_config(
+            SessionConfig::new()
+                .with_information_schema(true)
+                .with_create_default_catalog_and_schema(false)
+                .with_default_catalog_and_schema(&catalog_name, &default_schema),
+            &options,
+        );
+        let mut physical_rules = datafusion::physical_optimizer::optimizer::PhysicalOptimizer::new().rules;
+        iceberg_datafusion::insert_iceberg_physical_optimizer_rules(&mut physical_rules);
+        let state = datafusion::execution::session_state::SessionStateBuilder::new()
+            .with_config(config)
+            .with_default_features()
+            .with_physical_optimizer_rules(physical_rules)
+            .build();
+        let ctx = SessionContext::new_with_state(state);
         let provider = IcebergCatalogProvider::try_new(iceberg_catalog.clone())
             .await
             .map_err(|e| {
@@ -147,7 +193,7 @@ warehouse = database name, and scope session:role:<role> matching the PAT."
 
     pub async fn query(&self, sql: &str) -> Result<QueryResult> {
         #[cfg(all(target_arch = "wasm32", feature = "native"))]
-        idb_catalog::reset_bytes_fetched();
+        idb_catalog::reset_query_state();
         let started = QueryTimer::start();
         if let Some(schema) = parse_show_tables(sql) {
             let schema = schema.unwrap_or_else(|| self.default_schema.clone());
@@ -264,19 +310,56 @@ warehouse = database name, and scope session:role:<role> matching the PAT."
     }
 
     pub async fn explain(&self, sql: &str) -> Result<String> {
+        self.explain_with_options(sql, false).await
+    }
+
+    pub async fn explain_analyze(&self, sql: &str) -> Result<String> {
+        self.explain_with_options(sql, true).await
+    }
+
+    async fn explain_with_options(&self, sql: &str, analyze: bool) -> Result<String> {
+        let prefix = if analyze { "EXPLAIN ANALYZE" } else { "EXPLAIN" };
         let plan = self
             .ctx
-            .sql(&format!("EXPLAIN {sql}"))
+            .sql(&format!("{prefix} {sql}"))
             .await
             .context("explain plan")?;
         let batches = plan.collect().await.context("collect explain")?;
-        let mut lines = Vec::new();
-        for batch in batches {
-            let col = batch.column(0);
-            push_utf8_column(col, &mut lines);
-        }
-        Ok(lines.join("\n"))
+        format_explain_batches(&batches)
     }
+}
+
+fn format_explain_batches(batches: &[RecordBatch]) -> Result<String> {
+    let mut sections = Vec::new();
+    for batch in batches {
+        let schema = batch.schema();
+        let plan_type_idx = schema.index_of("plan_type").ok();
+        let plan_idx = schema.index_of("plan").ok();
+
+        if let (Some(type_idx), Some(plan_idx)) = (plan_type_idx, plan_idx) {
+            let types = utf8_column_values(batch.column(type_idx));
+            let plans = utf8_column_values(batch.column(plan_idx));
+            for (kind, body) in types.iter().zip(plans.iter()) {
+                if body.is_empty() {
+                    continue;
+                }
+                sections.push(format!("=== {kind} ===\n{body}"));
+            }
+        } else {
+            let mut lines = Vec::new();
+            for col_idx in 0..batch.num_columns() {
+                push_utf8_column(batch.column(col_idx), &mut lines);
+            }
+            sections.push(lines.join("\n"));
+        }
+    }
+    Ok(sections.join("\n\n"))
+}
+
+fn utf8_column_values(col: &dyn Array) -> Vec<String> {
+    let mut lines = Vec::new();
+    push_utf8_column(col, &mut lines);
+    lines
 }
 
 fn query_bytes_fetched() -> u64 {

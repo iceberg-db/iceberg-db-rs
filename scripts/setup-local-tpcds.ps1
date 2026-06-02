@@ -88,7 +88,7 @@ iterations: 1
 warmup: true
 
 duckdb:
-  parquet_root: $parquetForYaml
+  warehouse: $warehouseForYaml
   schema: tpcds
 "@ | Set-Content -Path $benchYaml -Encoding utf8
 

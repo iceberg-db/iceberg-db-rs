@@ -1,10 +1,10 @@
 //! Benchmark results and iceberg-db vs DuckDB comparison.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::engine::QueryRunResult;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchReport {
     pub suite: String,
     pub iceberg_db: EngineRunSummary,
@@ -12,7 +12,7 @@ pub struct BenchReport {
     pub comparisons: Vec<QueryComparison>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineRunSummary {
     pub engine: String,
     pub queries_run: usize,
@@ -22,7 +22,7 @@ pub struct EngineRunSummary {
     pub results: Vec<QueryRunResult>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryComparison {
     pub query_id: String,
     pub iceberg_ms: Option<u64>,

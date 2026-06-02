@@ -265,8 +265,11 @@ impl WasmS3Storage {
         url: Url,
         range: Option<Range<u64>>,
     ) -> Result<crate::wasm_local::WasmHttpResponse> {
+        if crate::wasm_query_io::query_cancelled() {
+            return Err(Error::new(ErrorKind::Unexpected, "query cancelled"));
+        }
         if method == Method::GET {
-            crate::wasm_query_io::record_s3_object_fetch(url.as_str());
+            record_s3_get(&url);
         }
         let _permit = self.fetch_limit.acquire().await.map_err(|_| {
             Error::new(
@@ -438,6 +441,10 @@ impl Storage for WasmS3Storage {
     }
 
     async fn read(&self, path: &str) -> Result<Bytes> {
+        if let Some(hit) = wasm_try_cache_read(path, None) {
+            return Ok(hit);
+        }
+        crate::wasm_query_io::record_byte_cache_miss();
         let obj = self.parse_location(path)?;
         let url = self.object_url(&obj)?;
         let resp = self.signed_request(Method::GET, url, None).await?;
@@ -447,6 +454,7 @@ impl Storage for WasmS3Storage {
                 format!("s3 GET failed: {}", resp.status),
             ));
         }
+        wasm_store_cache_read(path, None, resp.body.clone());
         Ok(resp.body)
     }
 
@@ -502,11 +510,15 @@ struct WasmS3Reader {
 #[async_trait]
 impl FileRead for WasmS3Reader {
     async fn read(&self, range: Range<u64>) -> Result<Bytes> {
+        if let Some(hit) = wasm_try_cache_read(&self.path, Some(range.clone())) {
+            return Ok(hit);
+        }
+        crate::wasm_query_io::record_byte_cache_miss();
         let obj = self.storage.parse_location(&self.path)?;
         let url = self.storage.object_url(&obj)?;
         let resp = self
             .storage
-            .signed_request(Method::GET, url, Some(range))
+            .signed_request(Method::GET, url, Some(range.clone()))
             .await?;
         if !resp.status.is_success() {
             return Err(Error::new(
@@ -514,8 +526,44 @@ impl FileRead for WasmS3Reader {
                 format!("s3 ranged GET failed: {}", resp.status),
             ));
         }
+        wasm_store_cache_read(&self.path, Some(range), resp.body.clone());
         Ok(resp.body)
     }
+}
+
+/// S3 GET accounting — only after we know this request will hit the network.
+fn record_s3_get(url: &Url) {
+    crate::wasm_query_io::record_s3_object_fetch(url.as_str());
+}
+
+fn wasm_try_cache_read(path: &str, range: Option<Range<u64>>) -> Option<Bytes> {
+    let cache = crate::byte_cache::global_byte_cache()?;
+    let fp = crate::byte_cache::global_cred_fingerprint();
+    if let Some(range) = range {
+        if let Some(hit) = crate::byte_cache::lookup_range(cache.as_ref(), path, range, fp) {
+            crate::wasm_query_io::record_byte_cache_hit();
+            return Some(hit);
+        }
+        return None;
+    }
+    if let Some(hit) = crate::byte_cache::lookup_full_object(cache.as_ref(), path, fp) {
+        crate::wasm_query_io::record_byte_cache_hit();
+        return Some(hit);
+    }
+    None
+}
+
+fn wasm_store_cache_read(path: &str, range: Option<Range<u64>>, data: Bytes) {
+    if data.is_empty() {
+        return;
+    }
+    let Some(cache) = crate::byte_cache::global_byte_cache() else {
+        return;
+    };
+    let fp = crate::byte_cache::global_cred_fingerprint();
+    let range = range.unwrap_or_else(|| 0..data.len() as u64);
+    let key = crate::byte_cache::ByteCacheKey::new(path, range, fp);
+    cache.put(&key, data);
 }
 
 #[cfg(all(test, target_arch = "wasm32"))]

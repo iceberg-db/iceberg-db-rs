@@ -27,15 +27,25 @@ pub struct BenchConfig {
     /// Optional warmup iteration before timing (not recorded).
     #[serde(default = "default_warmup")]
     pub warmup: bool,
+    /// DataFusion `target_partitions` for iceberg-db-rs (unset = CPU count).
+    pub target_partitions: Option<usize>,
+    /// DataFusion `optimizer.repartition_file_scans` (unset = default true).
+    pub repartition_file_scans: Option<bool>,
+    /// DataFusion `optimizer.enable_join_dynamic_filter_pushdown` (unset = default true).
+    pub enable_join_dynamic_filter_pushdown: Option<bool>,
+    /// DataFusion `optimizer.repartition_joins` (unset = default true).
+    pub repartition_joins: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct DuckDbConfig {
-    /// Directory with one sub-folder (or parquet files) per TPC-DS table name.
-    pub parquet_root: PathBuf,
+    /// Iceberg Hadoop warehouse root (defaults to top-level `warehouse` in bench.yaml).
+    pub warehouse: Option<PathBuf>,
+    /// Deprecated: use `warehouse` + DuckDB Iceberg extension instead of raw Parquet.
+    pub parquet_root: Option<PathBuf>,
     /// Optional on-disk DuckDB file; if omitted, uses an in-memory database.
     pub database: Option<PathBuf>,
-    /// Schema name for DuckDB views (default `tpcds`).
+    /// Schema / namespace for TPC-DS tables (default `tpcds`).
     #[serde(default = "default_schema")]
     pub schema: String,
 }

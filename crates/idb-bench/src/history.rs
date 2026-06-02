@@ -1,0 +1,352 @@
+//! Append-only benchmark run history for auditing performance over time.
+//!
+//! Each run is stored as one JSON line in `results/tpcds-history.jsonl`.
+//! [`regenerate_audit_markdown`] rebuilds `benchmarks/tpcds/HISTORY.md` from that file.
+
+use std::fs::{File, OpenOptions};
+use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use anyhow::{Context, Result};
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
+
+use crate::config::BenchConfig;
+use crate::report::BenchReport;
+
+/// Default JSONL path (repo root relative).
+pub const DEFAULT_HISTORY_JSONL: &str = "results/tpcds-history.jsonl";
+/// Markdown audit log regenerated from the JSONL file.
+pub const DEFAULT_HISTORY_MARKDOWN: &str = "benchmarks/tpcds/HISTORY.md";
+
+/// One recorded benchmark execution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunHistoryEntry {
+    /// ISO-8601 UTC timestamp.
+    pub recorded_at: String,
+    /// Short git revision when available (`git rev-parse --short HEAD`).
+    pub git_commit: Option<String>,
+    /// Optional short label (e.g. `post-pushdown-patch`).
+    pub label: Option<String>,
+    /// Human explanation of fixes, config changes, or experiment intent.
+    pub notes: String,
+    /// Structured list of code/config changes (repeat `--change` on CLI).
+    pub changes: Vec<String>,
+    pub config: ConfigSnapshot,
+    pub report: BenchReport,
+}
+
+/// Benchmark configuration captured for reproducibility.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigSnapshot {
+    pub config_path: String,
+    pub warehouse: String,
+    pub catalog: String,
+    pub schema: String,
+    pub manifest: String,
+    pub manifest_queries: Vec<String>,
+    pub iterations: u32,
+    pub warmup: bool,
+    pub target_partitions: Option<usize>,
+}
+
+pub fn snapshot_config(
+    config_path: &Path,
+    config: &BenchConfig,
+    manifest_queries: &[String],
+) -> ConfigSnapshot {
+    ConfigSnapshot {
+        config_path: config_path.display().to_string(),
+        warehouse: config.warehouse.display().to_string(),
+        catalog: config.catalog.clone(),
+        schema: config.schema.clone(),
+        manifest: config.manifest.display().to_string(),
+        manifest_queries: manifest_queries.to_vec(),
+        iterations: config.iterations,
+        warmup: config.warmup,
+        target_partitions: config.target_partitions,
+    }
+}
+
+pub fn detect_git_commit() -> Option<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if s.is_empty() { None } else { Some(s) }
+}
+
+/// Append one run to the JSONL history file (creates parent dirs).
+pub fn append_run(history_path: &Path, entry: &RunHistoryEntry) -> Result<()> {
+    if let Some(parent) = history_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create history dir {}", parent.display()))?;
+    }
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(history_path)
+        .with_context(|| format!("open history {}", history_path.display()))?;
+    let line = serde_json::to_string(entry)?;
+    writeln!(file, "{line}")?;
+    Ok(())
+}
+
+/// Load all entries from JSONL (skips blank lines).
+pub fn load_runs(history_path: &Path) -> Result<Vec<RunHistoryEntry>> {
+    if !history_path.exists() {
+        return Ok(Vec::new());
+    }
+    let file = File::open(history_path)
+        .with_context(|| format!("read history {}", history_path.display()))?;
+    let mut runs = Vec::new();
+    for line in BufReader::new(file).lines() {
+        let line = line?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        runs.push(serde_json::from_str(trimmed).with_context(|| {
+            format!("parse history line in {}", history_path.display())
+        })?);
+    }
+    Ok(runs)
+}
+
+/// Rebuild the markdown audit log from JSONL entries.
+pub fn regenerate_audit_markdown(history_path: &Path, markdown_path: &Path) -> Result<()> {
+    let runs = load_runs(history_path)?;
+    if let Some(parent) = markdown_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let md = render_history_markdown(&runs, history_path);
+    std::fs::write(markdown_path, md)
+        .with_context(|| format!("write {}", markdown_path.display()))?;
+    Ok(())
+}
+
+fn render_history_markdown(runs: &[RunHistoryEntry], jsonl_path: &Path) -> String {
+    let mut out = String::new();
+    out.push_str("# TPC-DS benchmark audit log\n\n");
+    out.push_str("Tracks **iceberg-db-rs vs DuckDB** latency over time, with notes on what changed between runs.\n\n");
+    out.push_str(&format!(
+        "- Machine-readable: [`{}`](../../{})\n",
+        jsonl_path.display(),
+        path_for_link(jsonl_path)
+    ));
+    out.push_str("- Regenerated by `idb-bench` after each recorded run\n\n");
+    out.push_str("## Record a run\n\n");
+    out.push_str("```powershell\n");
+    out.push_str("cargo run -p idb-bench --release -- --config benchmarks/tpcds/bench.yaml `\n");
+    out.push_str("  --notes \"What you changed and why\" `\n");
+    out.push_str("  --change \"patches/foo: short description\"\n");
+    out.push_str("```\n\n");
+    out.push_str("Use `--no-history` to skip recording. `speedup_vs_duckdb` > 1 means iceberg-db-rs was faster.\n\n");
+    out.push_str("## Summary\n\n");
+    out.push_str("| # | Recorded (UTC) | Commit | Label | iceberg total | DuckDB total | q07 iceberg | q07 DuckDB | Notes |\n");
+    out.push_str("|---|----------------|--------|-------|---------------|--------------|-------------|------------|-------|\n");
+
+    for (i, run) in runs.iter().enumerate() {
+        let n = i + 1;
+        let commit = run.git_commit.as_deref().unwrap_or("-");
+        let label = run.label.as_deref().unwrap_or("-");
+        let notes_short = truncate_one_line(&run.notes, 60);
+        let q07 = run
+            .report
+            .comparisons
+            .iter()
+            .find(|c| c.query_id == "q07");
+        let (q07_i, q07_d) = match q07 {
+            Some(c) => (
+                c.iceberg_ms.map(|v| v.to_string()).unwrap_or_else(|| "-".into()),
+                c.duckdb_ms.map(|v| v.to_string()).unwrap_or_else(|| "-".into()),
+            ),
+            None => ("-".to_string(), "-".to_string()),
+        };
+        out.push_str(&format!(
+            "| {n} | {} | {commit} | {label} | {} ms | {} ms | {q07_i} ms | {q07_d} ms | {notes_short} |\n",
+            run.recorded_at,
+            run.report.iceberg_db.total_elapsed_ms,
+            run.report.duckdb.total_elapsed_ms,
+        ));
+    }
+
+    out.push_str("\n## Run details\n\n");
+    if runs.is_empty() {
+        out.push_str("_No runs recorded yet._\n");
+        return out;
+    }
+
+    for (idx, run) in runs.iter().enumerate().rev() {
+        let n = idx + 1;
+        out.push_str(&format!("### Run {n} — {}\n\n", run.recorded_at));
+        if let Some(commit) = &run.git_commit {
+            out.push_str(&format!("- **Git:** `{commit}`\n"));
+        }
+        if let Some(label) = &run.label {
+            out.push_str(&format!("- **Label:** {label}\n"));
+        }
+        out.push_str(&format!("- **Config:** `{}`\n", run.config.config_path));
+        out.push_str(&format!(
+            "- **Warehouse:** `{}`\n",
+            run.config.warehouse
+        ));
+        out.push_str(&format!(
+            "- **Queries:** {}\n",
+            run.config.manifest_queries.join(", ")
+        ));
+        out.push_str(&format!(
+            "- **Iterations:** {}, warmup: {}\n",
+            run.config.iterations, run.config.warmup
+        ));
+        if let Some(tp) = run.config.target_partitions {
+            out.push_str(&format!("- **target_partitions:** {tp}\n"));
+        }
+
+        if !run.notes.is_empty() {
+            out.push_str("\n**Notes:**\n\n");
+            out.push_str(&run.notes);
+            if !run.notes.ends_with('\n') {
+                out.push('\n');
+            }
+            out.push('\n');
+        }
+
+        if !run.changes.is_empty() {
+            out.push_str("\n**Changes:**\n\n");
+            for c in &run.changes {
+                out.push_str(&format!("- {c}\n"));
+            }
+            out.push('\n');
+        }
+
+        if idx > 0 {
+            let prev = &runs[idx - 1];
+            if let Some(delta) = format_delta_vs_previous(run, prev) {
+                out.push_str(&delta);
+                out.push('\n');
+            }
+        }
+
+        out.push_str("\n| Query | iceberg-db-rs (ms) | DuckDB (ms) | speedup | rows match |\n");
+        out.push_str("|-------|-------------------|-------------|---------|------------|\n");
+        for c in &run.report.comparisons {
+            let speedup = c
+                .speedup_vs_duckdb
+                .map(|x| format!("{x:.2}x"))
+                .unwrap_or_else(|| "-".into());
+            let rows = c
+                .row_count_match
+                .map(|m| if m { "yes" } else { "NO" })
+                .unwrap_or("-");
+            let iceberg_ms = c
+                .iceberg_ms
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "ERR".into());
+            let duckdb_ms = c
+                .duckdb_ms
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "ERR".into());
+            out.push_str(&format!(
+                "| {} | {} | {} | {} | {} |\n",
+                c.query_id, iceberg_ms, duckdb_ms, speedup, rows
+            ));
+        }
+        out.push('\n');
+    }
+
+    out
+}
+
+fn path_for_link(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn truncate_one_line(s: &str, max: usize) -> String {
+    let one_line = s.replace('\n', " ");
+    if one_line.len() <= max {
+        one_line
+    } else {
+        format!("{}…", &one_line[..max.saturating_sub(1)])
+    }
+}
+
+fn format_delta_vs_previous(current: &RunHistoryEntry, previous: &RunHistoryEntry) -> Option<String> {
+    let mut lines = vec!["**Δ vs previous run:**".to_string()];
+    let mut any = false;
+
+    let total_delta = pct_delta(
+        previous.report.iceberg_db.total_elapsed_ms,
+        current.report.iceberg_db.total_elapsed_ms,
+    );
+    if let Some(d) = total_delta {
+        any = true;
+        lines.push(format!(
+            "- iceberg-db-rs total: {d} ({} → {} ms)",
+            previous.report.iceberg_db.total_elapsed_ms,
+            current.report.iceberg_db.total_elapsed_ms
+        ));
+    }
+
+    for c in &current.report.comparisons {
+        let prev = previous
+            .report
+            .comparisons
+            .iter()
+            .find(|p| p.query_id == c.query_id)?;
+        let (Some(cur), Some(pr)) = (c.iceberg_ms, prev.iceberg_ms) else {
+            continue;
+        };
+        if let Some(d) = pct_delta(pr, cur) {
+            any = true;
+            lines.push(format!("- {} iceberg: {d} ({} → {} ms)", c.query_id, pr, cur));
+        }
+    }
+
+    if any {
+        Some(lines.join("\n"))
+    } else {
+        None
+    }
+}
+
+fn pct_delta(before: u64, after: u64) -> Option<String> {
+    if before == 0 {
+        return None;
+    }
+    let pct = (after as f64 - before as f64) / before as f64 * 100.0;
+    if pct.abs() < 0.05 {
+        return Some("±0%".into());
+    }
+    Some(format!("{pct:+.1}%"))
+}
+
+pub fn record_run(
+    history_jsonl: &Path,
+    markdown_path: &Path,
+    config_path: &Path,
+    config: &BenchConfig,
+    manifest_queries: &[String],
+    report: &BenchReport,
+    label: Option<String>,
+    notes: String,
+    changes: Vec<String>,
+) -> Result<PathBuf> {
+    let entry = RunHistoryEntry {
+        recorded_at: Utc::now().to_rfc3339(),
+        git_commit: detect_git_commit(),
+        label,
+        notes,
+        changes,
+        config: snapshot_config(config_path, config, manifest_queries),
+        report: report.clone(),
+    };
+    append_run(history_jsonl, &entry)?;
+    regenerate_audit_markdown(history_jsonl, markdown_path)?;
+    Ok(history_jsonl.to_path_buf())
+}

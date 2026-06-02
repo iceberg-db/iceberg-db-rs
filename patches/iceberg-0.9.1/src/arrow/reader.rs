@@ -23,7 +23,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use arrow_arith::boolean::{and, and_kleene, is_not_null, is_null, not, or, or_kleene};
-use arrow_array::{Array, ArrayRef, BooleanArray, Datum as ArrowDatum, RecordBatch, Scalar};
+use arrow_array::{
+    Array, ArrayRef, BooleanArray, Datum as ArrowDatum, Int32Array, Int64Array, RecordBatch, Scalar,
+};
 use arrow_cast::cast::cast;
 use arrow_ord::cmp::{eq, gt, gt_eq, lt, lt_eq, neq};
 use arrow_schema::{
@@ -1512,6 +1514,66 @@ fn project_column(
 type PredicateResult =
     dyn FnMut(RecordBatch) -> std::result::Result<BooleanArray, ArrowError> + Send + 'static;
 
+/// Returns a hash set of the literal values when every literal is an integer
+/// (`Int`/`Long`), enabling a single-pass membership `RowFilter`. `i128` widens both
+/// 32- and 64-bit keys so column/literal width mismatches compare correctly.
+fn integer_literal_set(literals: &FnvHashSet<Datum>) -> Option<HashSet<i128>> {
+    let mut set = HashSet::with_capacity(literals.len());
+    for literal in literals {
+        match literal.literal() {
+            crate::spec::PrimitiveLiteral::Int(v) => {
+                set.insert(*v as i128);
+            }
+            crate::spec::PrimitiveLiteral::Long(v) => {
+                set.insert(*v as i128);
+            }
+            _ => return None,
+        }
+    }
+    Some(set)
+}
+
+/// Single-pass `IN` membership test for integer columns. Null rows do not match.
+fn integer_array_is_in(
+    array: &ArrayRef,
+    set: &HashSet<i128>,
+) -> std::result::Result<BooleanArray, ArrowError> {
+    match array.data_type() {
+        DataType::Int32 => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<Int32Array>()
+                .expect("Int32 column");
+            Ok(arr
+                .iter()
+                .map(|v| v.is_some_and(|x| set.contains(&(x as i128))))
+                .collect())
+        }
+        DataType::Int64 => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .expect("Int64 column");
+            Ok(arr
+                .iter()
+                .map(|v| v.is_some_and(|x| set.contains(&(x as i128))))
+                .collect())
+        }
+        _ => {
+            // Other integer widths: cast to Int64 then test membership.
+            let casted = cast(array, &DataType::Int64)?;
+            let arr = casted
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .expect("cast to Int64");
+            Ok(arr
+                .iter()
+                .map(|v| v.is_some_and(|x| set.contains(&(x as i128))))
+                .collect())
+        }
+    }
+}
+
 impl BoundPredicateVisitor for PredicateConverter<'_> {
     type T = Box<PredicateResult>;
 
@@ -1780,6 +1842,20 @@ impl BoundPredicateVisitor for PredicateConverter<'_> {
         _predicate: &BoundPredicate,
     ) -> Result<Box<PredicateResult>> {
         if let Some(idx) = self.bound_reference(reference)? {
+            // Fast path: when every literal is an integer (the common case for FK keys
+            // such as `ss_cdemo_sk`), test membership against a hash set in a single pass
+            // over the column. Parquet predicate pushdown then late-materializes the
+            // remaining projected columns only for surviving rows. This keeps large IN
+            // lists (semi-join reductions) cheap instead of O(rows × literals).
+            if let Some(int_set) = integer_literal_set(literals) {
+                return Ok(Box::new(move |batch| {
+                    let left = project_column(&batch, idx)?;
+                    integer_array_is_in(&left, &int_set)
+                }));
+            }
+
+            // Fallback for non-integer literal sets (typically small string sets):
+            // O(rows × literals) eq/or accumulation.
             let literals: Vec<_> = literals
                 .iter()
                 .map(|lit| get_arrow_datum(lit).unwrap())

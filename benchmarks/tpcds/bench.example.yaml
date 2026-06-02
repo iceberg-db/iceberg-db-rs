@@ -15,7 +15,11 @@ manifest: benchmarks/tpcds/manifest.toml
 iterations: 1
 warmup: true
 
+# iceberg-db-rs tuning (A/B against defaults):
+# target_partitions: 20
+
+# DuckDB uses the Iceberg extension on the same warehouse (fair comparison).
 duckdb:
-  parquet_root: /absolute/path/to/tpcds_parquet
+  # warehouse: /absolute/path/to/tpcds_iceberg_warehouse  # optional if same as `warehouse` above
   schema: tpcds
   # database: /tmp/tpcds.duckdb

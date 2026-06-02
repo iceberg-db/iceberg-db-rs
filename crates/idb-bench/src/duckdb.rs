@@ -1,4 +1,4 @@
-//! DuckDB runner (bundled engine, Parquet-backed TPC-DS views).
+//! DuckDB runner using the Iceberg extension (`iceberg_scan`) on the same warehouse as iceberg-db-rs.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -8,24 +8,37 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use duckdb::Connection;
 
-use crate::config::DuckDbConfig;
+use crate::config::BenchConfig;
 use crate::engine::{BenchEngine, QueryRunResult};
+use crate::qualify::qualify_tpcds_sql;
 use crate::tpcds::tables::TPCDS_TABLES;
 
 pub struct DuckDbBench {
     inner: Arc<Mutex<DuckDbState>>,
+    schema: String,
 }
 
 struct DuckDbState {
     conn: Connection,
-    parquet_root: PathBuf,
+    warehouse_root: PathBuf,
     schema: String,
     prepared: bool,
 }
 
 impl DuckDbBench {
-    pub fn open(config: &DuckDbConfig) -> Result<Self> {
-        let conn = match &config.database {
+    pub fn open(config: &BenchConfig) -> Result<Self> {
+        let duckdb = &config.duckdb;
+        let warehouse = duckdb
+            .warehouse
+            .clone()
+            .unwrap_or_else(|| config.warehouse.clone());
+        if duckdb.parquet_root.is_some() {
+            anyhow::bail!(
+                "duckdb.parquet_root is deprecated; remove it and set duckdb.warehouse (or top-level warehouse) \
+                 so DuckDB uses the Iceberg extension on the same tables as iceberg-db-rs"
+            );
+        }
+        let conn = match &duckdb.database {
             Some(path) => Connection::open(path)
                 .with_context(|| format!("open DuckDB database {}", path.display()))?,
             None => Connection::open_in_memory().context("open in-memory DuckDB")?,
@@ -33,10 +46,11 @@ impl DuckDbBench {
         Ok(Self {
             inner: Arc::new(Mutex::new(DuckDbState {
                 conn,
-                parquet_root: config.parquet_root.clone(),
-                schema: config.schema.clone(),
+                warehouse_root: warehouse,
+                schema: duckdb.schema.clone(),
                 prepared: false,
             })),
+            schema: duckdb.schema.clone(),
         })
     }
 
@@ -47,55 +61,27 @@ impl DuckDbBench {
         let mut guard = inner.lock().map_err(|e| anyhow::anyhow!("duckdb lock: {e}"))?;
         f(&mut guard)
     }
+
+    pub fn explain_analyze(&self, sql: &str) -> Result<String> {
+        let inner = Arc::clone(&self.inner);
+        let sql = qualify_tpcds_sql(sql, &self.schema);
+        Self::with_conn(&inner, |state| {
+            prepare_iceberg_tables(state)?;
+            explain_analyze_sync(&state.conn, &sql)
+        })
+    }
 }
 
 #[async_trait]
 impl BenchEngine for DuckDbBench {
     fn name(&self) -> &'static str {
-        "duckdb"
+        "duckdb-iceberg"
     }
 
     async fn prepare(&mut self) -> Result<()> {
         let inner = Arc::clone(&self.inner);
         tokio::task::spawn_blocking(move || {
-            Self::with_conn(&inner, |state| {
-                if state.prepared {
-                    return Ok(());
-                }
-                let schema = &state.schema;
-                state
-                    .conn
-                    .execute_batch(&format!("CREATE SCHEMA IF NOT EXISTS {schema};"))
-                    .context("create DuckDB schema")?;
-                let mut registered = 0usize;
-                for table in TPCDS_TABLES {
-                    if let Some(glob) = parquet_glob(&state.parquet_root, table) {
-                        let sql = format!(
-                            "CREATE OR REPLACE TABLE {schema}.{table} AS \
-                             SELECT * FROM read_parquet('{}');",
-                            glob.replace('\\', "/")
-                        );
-                        state
-                            .conn
-                            .execute(&sql, [])
-                            .with_context(|| format!("register {schema}.{table}"))?;
-                        registered += 1;
-                    }
-                }
-                if registered == 0 {
-                    anyhow::bail!(
-                        "no TPC-DS parquet under {}",
-                        state.parquet_root.display()
-                    );
-                }
-                state
-                    .conn
-                    .execute(&format!("USE {schema};"), [])
-                    .with_context(|| format!("USE {schema}"))?;
-                tracing::info!(registered, "DuckDB TPC-DS tables registered from parquet");
-                state.prepared = true;
-                Ok(())
-            })
+            Self::with_conn(&inner, |state| prepare_iceberg_tables(state))
         })
         .await
         .context("duckdb prepare join")?
@@ -104,19 +90,23 @@ impl BenchEngine for DuckDbBench {
     async fn run_query(&mut self, query_id: &str, sql: &str) -> QueryRunResult {
         let inner = Arc::clone(&self.inner);
         let query_id_owned = query_id.to_string();
-        let sql = sql.to_string();
+        let sql = qualify_tpcds_sql(sql, &self.schema);
         match tokio::task::spawn_blocking(move || {
             Self::with_conn(&inner, |state| run_query_sync(&state.conn, &query_id_owned, &sql))
         })
         .await
         {
             Ok(Ok(r)) => r,
-            Ok(Err(e)) => QueryRunResult {
-                query_id: query_id.to_string(),
-                elapsed_ms: 0,
-                row_count: 0,
-                error: Some(format!("{e:#}")),
-            },
+            Ok(Err(e)) => {
+                let msg = format!("{e:#}");
+                eprintln!("{query_id} duckdb-iceberg: {msg}");
+                QueryRunResult {
+                    query_id: query_id.to_string(),
+                    elapsed_ms: 0,
+                    row_count: 0,
+                    error: Some(msg),
+                }
+            }
             Err(e) => QueryRunResult {
                 query_id: query_id.to_string(),
                 elapsed_ms: 0,
@@ -125,6 +115,82 @@ impl BenchEngine for DuckDbBench {
             },
         }
     }
+}
+
+fn prepare_iceberg_tables(state: &mut DuckDbState) -> Result<()> {
+    if state.prepared {
+        return Ok(());
+    }
+
+    state
+        .conn
+        .execute_batch(
+            "INSTALL iceberg;\nLOAD iceberg;\nSET unsafe_enable_version_guessing = true;",
+        )
+        .context(
+            "load DuckDB iceberg extension (requires network on first INSTALL iceberg)",
+        )?;
+
+    let schema = &state.schema;
+    state
+        .conn
+        .execute_batch(&format!("CREATE SCHEMA IF NOT EXISTS {schema};"))
+        .context("create DuckDB schema")?;
+
+    let mut registered = 0usize;
+    for table in TPCDS_TABLES {
+        let table_dir = state.warehouse_root.join(schema).join(table);
+        let metadata_hint = table_dir.join("metadata").join("version-hint.text");
+        let metadata_v1 = table_dir.join("metadata").join("v1.metadata.json");
+        if !metadata_hint.is_file() && !metadata_v1.is_file() {
+            continue;
+        }
+
+        let scan_path = path_for_iceberg_scan(&table_dir);
+        let sql = format!(
+            "CREATE OR REPLACE VIEW {schema}.{table} AS \
+             SELECT * FROM iceberg_scan('{scan_path}', allow_moved_paths := true);"
+        );
+        state
+            .conn
+            .execute(&sql, [])
+            .with_context(|| format!("register iceberg view {schema}.{table}"))?;
+        registered += 1;
+    }
+
+    if registered == 0 {
+        anyhow::bail!(
+            "no Iceberg tables under {}/{}/{{table}}/metadata — run setup-local-tpcds.ps1 first",
+            state.warehouse_root.display(),
+            schema
+        );
+    }
+
+    state
+        .conn
+        .execute(&format!("USE {schema};"), [])
+        .context("USE schema")?;
+    tracing::info!(registered, "DuckDB Iceberg views registered from warehouse");
+    state.prepared = true;
+    Ok(())
+}
+
+/// Path string for `iceberg_scan` (table root directory).
+fn path_for_iceberg_scan(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn explain_analyze_sync(conn: &Connection, sql: &str) -> Result<String> {
+    let mut stmt = conn
+        .prepare(&format!("EXPLAIN ANALYZE {sql}"))
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut rows = stmt.query([]).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut lines = Vec::new();
+    while let Some(row) = rows.next().map_err(|e| anyhow::anyhow!("{e}"))? {
+        let text: String = row.get(1).map_err(|e| anyhow::anyhow!("{e}"))?;
+        lines.push(text);
+    }
+    Ok(lines.join("\n"))
 }
 
 fn run_query_sync(conn: &Connection, query_id: &str, sql: &str) -> Result<QueryRunResult> {
@@ -152,23 +218,4 @@ fn run_query_sync(conn: &Connection, query_id: &str, sql: &str) -> Result<QueryR
         row_count: count,
         error: None,
     })
-}
-
-fn parquet_glob(root: &Path, table: &str) -> Option<String> {
-    let dir = root.join(table);
-    if dir.is_dir() {
-        let pattern = dir.join("*.parquet");
-        if pattern.parent().map(|p| p.exists()).unwrap_or(false) {
-            return Some(pattern.to_string_lossy().into_owned());
-        }
-    }
-    let single = dir.with_extension("parquet");
-    if single.is_file() {
-        return Some(single.to_string_lossy().into_owned());
-    }
-    let flat = root.join(format!("{table}.parquet"));
-    if flat.is_file() {
-        return Some(flat.to_string_lossy().into_owned());
-    }
-    None
 }

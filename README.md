@@ -8,6 +8,58 @@ Rust SQL engine over Apache Iceberg (browser/WASM target).
 - **Iceberg:** [iceberg-rust](https://github.com/apache/iceberg-rust) + [iceberg-datafusion](https://crates.io/crates/iceberg-datafusion)
 - **Config:** YAML via `~/.iceberg-db/config.yaml`
 
+### Vendor patches (Iceberg + DataFusion integration)
+
+We maintain **forked** copies of upstream crates under [`patches/`](patches/) (see [`patches/README.md`](patches/README.md)) instead of layering workarounds in `idb-*`. Scan and pushdown behavior lives where DataFusion meets Iceberg.
+
+Both are enabled via `[patch.crates-io]` in [`Cargo.toml`](Cargo.toml):
+
+```toml
+[patch.crates-io]
+iceberg = { path = "patches/iceberg-0.9.1" }
+iceberg-datafusion = { path = "patches/iceberg-datafusion-0.9.1" }
+```
+
+Refresh from crates.io with:
+
+```powershell
+.\scripts\vendor-iceberg-patch.ps1
+.\scripts\vendor-iceberg-datafusion-patch.ps1
+```
+
+#### `patches/iceberg-0.9.1`
+
+Fork of [iceberg-rust](https://github.com/apache/iceberg-rust) **0.9.1** for correctness and concurrency on native and WASM targets:
+
+| Area | What changed |
+|------|----------------|
+| **Object cache / S3** | Bounded concurrency for browser/WASM scans (`object_cache` overlay) |
+| **Equality deletes** | Fixes inverted delete predicates and missing delete-filter errors in `caching_delete_file_loader` |
+| **Scan parallelism** | Tunable `available_parallelism()` for manifest and file I/O on native |
+
+Full file list: [`patches/iceberg-0.9.1/PATCH.md`](patches/iceberg-0.9.1/PATCH.md).
+
+#### `patches/iceberg-datafusion-0.9.1`
+
+Fork of **iceberg-datafusion 0.9.1** (DataFusion 52). Adds **general** scan optimizations—no query-specific SQL rewrites:
+
+| Feature | Problem | Fix |
+|---------|---------|-----|
+| **Dynamic filter pushdown** | Join and runtime filters from `HashJoinExec` never reached `IcebergTableScan`, so large fact scans showed `predicate:[]` | `handle_child_pushdown_result` + physical → Iceberg `Predicate` conversion (`physical_expr_to_predicate.rs`) |
+| **Parallel scan partitions** | Upstream used a single partition and ignored `execute(partition)` | `target_partitions` from session config, `repartitioned()`, size-balanced file groups (`file_groups.rs`) |
+
+**DataFusion options** (also exposed via `idb-cli --target-partitions`):
+
+| Option | Effect |
+|--------|--------|
+| `execution.target_partitions` | Scan partition count |
+| `optimizer.repartition_file_scans` | Allows increasing scan partitions for large tables |
+| `optimizer.enable_join_dynamic_filter_pushdown` | Hash-join → probe-side scan filters (default on) |
+
+**Validate:** `idb-cli --explain-analyze` on a selective join—probe-side `IcebergTableScan` should show `partitions>1` on large tables and a non-empty `predicate:[...]` when pushdown applies. Dynamic filters apply to the **probe** side of hash joins; star-schema queries still depend on join order from the planner.
+
+Full change list: [`patches/iceberg-datafusion-0.9.1/PATCH.md`](patches/iceberg-datafusion-0.9.1/PATCH.md).
+
 ## Crates
 
 | Crate | Purpose |
@@ -38,20 +90,20 @@ Seed demo tables into the same warehouse path, then query from Rust.
 
 ## Benchmarks (TPC-DS vs DuckDB)
 
-The [`idb-bench`](crates/idb-bench) crate runs the [TPC-DS](https://www.tpc.org/tpcds/) query suite against **iceberg-db-rs** (Iceberg warehouse) and **DuckDB** (Parquet), then prints a comparison table.
+The [`idb-bench`](crates/idb-bench) crate runs the [TPC-DS](https://www.tpc.org/tpcds/) query suite against **iceberg-db-rs** and **DuckDB** (both on the same local Iceberg warehouse), then prints a comparison table.
 
 ```powershell
 # From repository root (not web-wasm/)
 .\scripts\fetch-tpcds-queries.ps1
 
 Copy-Item benchmarks/tpcds/bench.example.yaml benchmarks/tpcds/bench.yaml
-# edit warehouse + duckdb.parquet_root in bench.yaml
+# edit warehouse in bench.yaml (shared by both engines)
 
 cargo run -p idb-bench --release -- --config benchmarks/tpcds/bench.yaml
 cargo run -p idb-bench --release -- --config benchmarks/tpcds/bench.yaml --json tpcds-report.json
 ```
 
-See [benchmarks/tpcds/README.md](benchmarks/tpcds/README.md) for data layout and manifest format.
+See [benchmarks/tpcds/README.md](benchmarks/tpcds/README.md) for data layout and manifest format. Recorded runs and fix notes: [benchmarks/tpcds/HISTORY.md](benchmarks/tpcds/HISTORY.md).
 
 ## Tests
 
@@ -73,5 +125,5 @@ workspace UI.
 
 1. **P0 (this scaffold):** native CLI, file + REST catalog, basic `SELECT`
 2. **P1:** SQL compliance tests shared with `iceberg-db-sqltest`
-3. **P2:** filter/projection pushdown parity
+3. **P2:** filter/projection pushdown parity — **in progress** via `patches/iceberg-datafusion-0.9.1` (dynamic filters + partitioned scans)
 4. **P3:** `idb-wasm` + browser extension UI (Snowsight-lite)
