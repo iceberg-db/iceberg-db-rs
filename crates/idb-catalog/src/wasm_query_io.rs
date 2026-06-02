@@ -3,7 +3,7 @@
 #[cfg(target_arch = "wasm32")]
 use std::collections::HashSet;
 #[cfg(target_arch = "wasm32")]
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 #[cfg(target_arch = "wasm32")]
 use std::sync::Mutex;
 
@@ -12,6 +12,15 @@ static BYTES_FETCHED: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(target_arch = "wasm32")]
 static S3_FILES_FETCHED: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(target_arch = "wasm32")]
+static BYTE_CACHE_HITS: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(target_arch = "wasm32")]
+static BYTE_CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(target_arch = "wasm32")]
+static QUERY_CANCELLED: AtomicBool = AtomicBool::new(false);
 
 /// Distinct S3 object URLs seen this query (one parquet file may use many range GETs).
 #[cfg(target_arch = "wasm32")]
@@ -23,8 +32,16 @@ pub fn reset_bytes_fetched() {
     {
         BYTES_FETCHED.store(0, Ordering::Relaxed);
         S3_FILES_FETCHED.store(0, Ordering::Relaxed);
+        BYTE_CACHE_HITS.store(0, Ordering::Relaxed);
+        BYTE_CACHE_MISSES.store(0, Ordering::Relaxed);
         *SEEN_S3_OBJECTS.lock().expect("s3 object set lock") = Some(HashSet::new());
     }
+}
+
+pub fn reset_query_state() {
+    reset_bytes_fetched();
+    #[cfg(target_arch = "wasm32")]
+    QUERY_CANCELLED.store(false, Ordering::Relaxed);
 }
 
 pub fn add_bytes_fetched(n: u64) {
@@ -68,4 +85,36 @@ pub fn files_fetched() -> u64 {
     }
     #[cfg(not(target_arch = "wasm32"))]
     0
+}
+
+pub fn byte_cache_hits() -> u64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        return BYTE_CACHE_HITS.load(Ordering::Relaxed);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    0
+}
+
+pub fn byte_cache_misses() -> u64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        return BYTE_CACHE_MISSES.load(Ordering::Relaxed);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    0
+}
+
+pub fn request_query_cancel() {
+    #[cfg(target_arch = "wasm32")]
+    QUERY_CANCELLED.store(true, Ordering::Relaxed);
+}
+
+pub fn query_cancelled() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        return QUERY_CANCELLED.load(Ordering::Relaxed);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    false
 }
