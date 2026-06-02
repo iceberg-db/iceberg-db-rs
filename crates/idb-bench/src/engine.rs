@@ -2,9 +2,9 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryRunResult {
     pub query_id: String,
     pub elapsed_ms: u64,

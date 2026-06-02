@@ -47,5 +47,7 @@ idb-core = { path = "crates/idb-core" }
 idb-bench = { path = "crates/idb-bench" }
 
 # Requires patches/iceberg-0.9.1 (run web-wasm\serve.ps1 or scripts\vendor-iceberg-patch.ps1 once)
+# Requires patches/iceberg-datafusion-0.9.1 (run scripts\vendor-iceberg-datafusion-patch.ps1)
 [patch.crates-io]
 iceberg = { path = "patches/iceberg-0.9.1" }
+iceberg-datafusion = { path = "patches/iceberg-datafusion-0.9.1" }

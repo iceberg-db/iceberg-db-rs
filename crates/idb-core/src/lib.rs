@@ -5,7 +5,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use idb_catalog::CatalogRegistry;
 use idb_config::{load, AppConfig};
-use idb_sql::{QueryResult, SqlSession};
+use idb_sql::{QueryResult, SessionOptions, SqlSession};
 
 pub struct Engine {
     registry: CatalogRegistry,
@@ -19,8 +19,15 @@ impl Engine {
     }
 
     pub async fn from_config(config: AppConfig) -> Result<Self> {
+        Self::from_config_with_options(config, SessionOptions::default()).await
+    }
+
+    pub async fn from_config_with_options(
+        config: AppConfig,
+        options: SessionOptions,
+    ) -> Result<Self> {
         let registry = CatalogRegistry::from_config(&config).await?;
-        let session = SqlSession::from_registry(&registry).await?;
+        let session = SqlSession::from_registry_with_options(&registry, options).await?;
         Ok(Self { registry, session })
     }
 
@@ -33,10 +40,25 @@ impl Engine {
         catalog_name: &str,
         default_schema: &str,
     ) -> Result<Self> {
+        Self::from_warehouse_with_options(
+            warehouse,
+            catalog_name,
+            default_schema,
+            SessionOptions::default(),
+        )
+        .await
+    }
+
+    pub async fn from_warehouse_with_options(
+        warehouse: &Path,
+        catalog_name: &str,
+        default_schema: &str,
+        options: SessionOptions,
+    ) -> Result<Self> {
         let registry =
             CatalogRegistry::from_file_warehouse_with_schema(catalog_name, warehouse, default_schema)
                 .await?;
-        let session = SqlSession::from_registry(&registry).await?;
+        let session = SqlSession::from_registry_with_options(&registry, options).await?;
         Ok(Self { registry, session })
     }
 
@@ -56,12 +78,17 @@ impl Engine {
         self.session.explain(sql).await
     }
 
+    pub async fn explain_analyze(&self, sql: &str) -> Result<String> {
+        self.session.explain_analyze(sql).await
+    }
+
     pub async fn set_default_catalog(&mut self, name: &str) -> Result<()> {
         let catalog = self.registry.get(name)?;
-        self.session = SqlSession::from_iceberg_catalog(
+        self.session = SqlSession::from_iceberg_catalog_with_options(
             name.to_string(),
             self.registry.default_schema().to_string(),
             catalog,
+            SessionOptions::default(),
         )
         .await?;
         Ok(())

@@ -1,0 +1,10 @@
+warehouse: C:/Users/chand/.cursor/projects/empty-window/iceberg-db-rs-git/bench-data/tpcds-sf10/warehouse
+catalog: local
+schema: tpcds
+manifest: benchmarks/tpcds/manifest.toml
+iterations: 1
+warmup: false
+target_partitions: 20
+duckdb:
+  warehouse: C:/Users/chand/.cursor/projects/empty-window/iceberg-db-rs-git/bench-data/tpcds-sf10/warehouse
+  schema: tpcds

@@ -6,6 +6,7 @@ use std::time::Instant;
 use anyhow::Result;
 use async_trait::async_trait;
 use idb_core::Engine;
+use idb_sql::SessionOptions;
 
 use crate::config::BenchConfig;
 use crate::engine::{BenchEngine, QueryRunResult};
@@ -18,13 +19,21 @@ pub struct IcebergDbEngine {
 
 impl IcebergDbEngine {
     pub async fn open(config: &BenchConfig) -> Result<Self> {
+        let options = SessionOptions {
+            target_partitions: config.target_partitions,
+            repartition_file_scans: config.repartition_file_scans,
+            enable_join_dynamic_filter_pushdown: config.enable_join_dynamic_filter_pushdown,
+            repartition_joins: config.repartition_joins,
+            ..Default::default()
+        };
         let engine = if let Some(path) = &config.iceberg_config {
-            Engine::from_config_file(path).await?
+            Engine::from_config_with_options(idb_config::load(path)?, options).await?
         } else {
-            Engine::from_warehouse_with_schema(
+            Engine::from_warehouse_with_options(
                 &config.warehouse,
                 &config.catalog,
                 &config.schema,
+                options,
             )
             .await?
         };
@@ -39,7 +48,13 @@ impl IcebergDbEngine {
         let result = self.engine.query(&sql).await?;
         Ok((result.row_count, result.elapsed_ms))
     }
+
+    pub async fn explain_analyze(&self, sql: &str) -> Result<String> {
+        let sql = qualify_tpcds_sql(sql, &self.schema);
+        self.engine.explain_analyze(&sql).await
+    }
 }
+
 
 #[async_trait]
 impl BenchEngine for IcebergDbEngine {

@@ -90,6 +90,8 @@ let activeSampleQueries = HORIZON_QUERIES;
 let queryRunning = false;
 let queryTimerInterval = null;
 let queryBytesInterval = null;
+/** Bumped on cancel or new run so late WASM promises are ignored. */
+let activeQueryToken = 0;
 
 // ---------------------------------------------------------------------------
 // DOM helpers
@@ -482,9 +484,43 @@ function setLoadingOverlay(visible, message) {
   $("loading").classList.toggle("hidden", !visible);
 }
 
+function isQueryCancelledError(msg) {
+  return /cancelled/i.test(msg);
+}
+
+function finishQueryUi() {
+  stopQueryElapsedTimer();
+  stopQueryBytesPoller();
+  queryRunning = false;
+  setRunning(false);
+  $("status-time")?.closest(".statusbar")?.classList.remove("statusbar-running");
+}
+
 function setRunning(running) {
-  $("run-btn").disabled = running || !window.__idbReady;
-  // Queries use the status bar only — do not reuse the full-screen init overlay.
+  const ready = window.__idbReady;
+  $("run-btn").disabled = running || !ready;
+  const cancelBtn = $("cancel-btn");
+  if (cancelBtn) {
+    cancelBtn.hidden = !running;
+    cancelBtn.disabled = !running;
+  }
+}
+
+function cancelQuery() {
+  if (!queryRunning) return;
+  activeQueryToken += 1;
+  window.__idb?.idb_cancel_query?.();
+  finishQueryUi();
+  $("results-grid-wrap").innerHTML =
+    '<div class="empty-state">Query cancelled. Run again when ready.</div>';
+  $("out-text").textContent = "";
+  setStatus({
+    message: "Cancelled",
+    kind: "muted",
+    files: 0,
+    bytes: 0,
+  });
+  console.info("[iceberg-db] query cancelled by user");
 }
 
 // ---------------------------------------------------------------------------
@@ -506,6 +542,7 @@ async function runQuery() {
   const ver = window.__idb?.idb_wasm_version?.() ?? "?";
   console.info("[iceberg-db] runQuery", { ver, sql: sql.slice(0, 120) });
 
+  const queryToken = ++activeQueryToken;
   queryRunning = true;
   setRunning(true);
   setStatus({ message: "Running…", kind: "muted" });
@@ -525,6 +562,7 @@ async function runQuery() {
         ),
       ]);
     } catch (raceErr) {
+      if (queryToken !== activeQueryToken) return;
       if (!(raceErr instanceof Error && raceErr.message === UI_TIMEOUT_MARKER)) {
         throw raceErr;
       }
@@ -534,9 +572,11 @@ async function runQuery() {
         kind: "muted",
       });
       $("results-grid-wrap").innerHTML =
-        '<div class="empty-state">Query still running (S3 parquet scan). Results will appear when finished.</div>';
+        '<div class="empty-state">Query still running (S3 parquet scan). Results will appear when finished. Use Cancel to stop.</div>';
       result = await queryPromise;
     }
+
+    if (queryToken !== activeQueryToken) return;
 
     console.info("[iceberg-db] runQuery ok", result?.row_count, "rows");
     pushHistory(sql);
@@ -552,7 +592,21 @@ async function runQuery() {
     });
     switchResultsTab("grid");
   } catch (e) {
+    if (queryToken !== activeQueryToken) return;
     const msg = String(e);
+    if (isQueryCancelledError(msg)) {
+      $("results-grid-wrap").innerHTML =
+        '<div class="empty-state">Query cancelled. Run again when ready.</div>';
+      $("out-text").textContent = "";
+      setStatus({
+        message: "Cancelled",
+        kind: "muted",
+        ms: Math.round(performance.now() - t0),
+        files: 0,
+        bytes: 0,
+      });
+      return;
+    }
     $("results-grid-wrap").innerHTML = `<div class="empty-state" style="color:var(--error)">${escapeHtml(
       msg
     )}</div>`;
@@ -564,10 +618,9 @@ async function runQuery() {
     });
     switchResultsTab("text");
   } finally {
-    stopQueryElapsedTimer();
-    stopQueryBytesPoller();
-    queryRunning = false;
-    setRunning(false);
+    if (queryToken === activeQueryToken) {
+      finishQueryUi();
+    }
   }
 }
 
@@ -660,6 +713,7 @@ function wireToolbar() {
     tab.addEventListener("click", () => switchResultsTab(tab.dataset.tab));
   });
   $("run-btn").addEventListener("click", runQuery);
+  $("cancel-btn").addEventListener("click", cancelQuery);
   $("clear-btn").addEventListener("click", () => {
     $("results-grid-wrap").innerHTML = '<div class="empty-state">Run a query to see results.</div>';
     $("out-text").textContent = "";
@@ -689,6 +743,7 @@ async function boot() {
     idb_query,
     idb_bytes_fetched,
     idb_files_fetched,
+    idb_cancel_query,
     idb_wasm_version,
   } = bindings;
   window.__idb = {
@@ -697,6 +752,7 @@ async function boot() {
     idb_query,
     idb_bytes_fetched,
     idb_files_fetched,
+    idb_cancel_query,
     idb_wasm_version,
   };
 

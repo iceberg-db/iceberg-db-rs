@@ -15,6 +15,7 @@ async-trait = "0.1"
 clap.workspace = true
 idb-core.workspace = true
 idb-config.workspace = true
+idb-sql = { workspace = true, features = ["native"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 serde_yaml = "0.9"
@@ -23,8 +24,9 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 regex = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 
-duckdb = { version = "1.1", features = ["bundled"], optional = true }
+duckdb = { version = "1.3", features = ["bundled"], optional = true }
 
 [features]
 default = ["duckdb-engine"]

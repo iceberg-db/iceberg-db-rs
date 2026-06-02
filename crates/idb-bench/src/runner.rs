@@ -13,7 +13,7 @@ pub async fn run_tpcds_suite(config: &BenchConfig) -> Result<BenchReport> {
     let queries = load_manifest(&config.manifest)?;
 
     let mut iceberg = IcebergDbEngine::open(config).await?;
-    let mut duckdb = DuckDbBench::open(&config.duckdb)?;
+    let mut duckdb = DuckDbBench::open(config)?;
 
     iceberg.prepare().await?;
     duckdb.prepare().await?;

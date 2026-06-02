@@ -100,6 +100,8 @@ The UI talks to the proxy **directly on port 8787** (not Trunk `/sf/`). Some Tru
 
 **S3 reads:** Iceberg metadata and Parquet objects are fetched through the same proxy (`GET http://127.0.0.1:8787/_s3?u=…`) with SigV4 headers, so the browser never talks to `*.amazonaws.com` directly (no S3 CORS needed in dev). Manifests and parquet byte ranges are fetched **in parallel** (default **6** in-flight GETs — matches the browser per-host connection limit; console: `idb_query: s3 fetch concurrency=6`). Override with `s3.fetch-concurrency` (1–32). If you see CORS errors on `_s3` under heavy load, keep concurrency ≤ 6 and restart `serve.ps1` (rebuilds the proxy).
 
+**Byte cache (CLI + WASM):** Parquet byte ranges are cached after the first fetch; repeat queries reuse overlapping ranges (Parquet coalesces reads, so the cache matches subsets of a larger prior fetch). Manifest/avro full-file reads are cached too. Native CLI: `%USERPROFILE%\.cache\iceberg-db\byte-cache`. WASM: in-tab memory (default **1 GiB**, `idb.byte-cache-max-mib`). After a query, the console logs `byte-cache hits=… misses=…` — second run of the same scan should show many hits and few `s3 fetch` lines. Disable: `IDB_BYTE_CACHE=0` or `idb.byte-cache: "false"`.
+
 Alternative: native **`idb-cli`** (no CORS).
 
 PAT is sent only from your browser through the local proxy to Snowflake — not stored in this repository.

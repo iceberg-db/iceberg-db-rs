@@ -356,6 +356,16 @@ body {
   background: transparent;
 }
 
+.btn-cancel {
+  background: transparent;
+  border-color: var(--error, #c53030);
+  color: var(--error, #c53030);
+}
+
+.btn-cancel:hover:not(:disabled) {
+  background: rgba(197, 48, 48, 0.08);
+}
+
 .toolbar-hint {
   font-size: 12px;
   color: var(--text-muted);

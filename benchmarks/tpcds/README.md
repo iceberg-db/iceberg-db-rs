@@ -18,11 +18,11 @@ Both engines must see the **same logical TPC-DS dataset**:
    - `{warehouse}/tpcds/{table}/metadata/*.metadata.json`
    - Register with `idb-bench` using `warehouse`, `catalog: local`, `schema: tpcds`.
 
-2. **DuckDB** — Parquet per table:
-   - `{parquet_root}/store_sales/*.parquet` (or `{parquet_root}/store_sales.parquet`)
-   - Other TPC-DS tables likewise.
+2. **DuckDB** — same Iceberg warehouse via the [Iceberg extension](https://duckdb.org/docs/extensions/iceberg) (`INSTALL iceberg; LOAD iceberg;` + `iceberg_scan` per table).
 
-Generate data with [TPC-DS tools](https://www.tpc.org/tpcds/) (e.g. `dsdgen`) or your existing Java/Spark pipeline, then export Parquet and (optionally) register Iceberg tables.
+Parquet under `bench-data/.../parquet` is only used by the setup script to **build** the Iceberg warehouse (Spark CTAS), not by the benchmark runtime.
+
+Generate data with `.\scripts\setup-local-tpcds.ps1` (DuckDB `dsdgen` + Spark → Iceberg).
 
 ## Fetch all 99 queries
 
@@ -65,11 +65,23 @@ Run these from the **repository root** (`iceberg-db-rs-git/`), not `web-wasm/`.
 ```powershell
 # PowerShell (repo root)
 Copy-Item benchmarks/tpcds/bench.example.yaml benchmarks/tpcds/bench.yaml
-# edit warehouse + duckdb.parquet_root in bench.yaml
+# edit warehouse paths in bench.yaml (both engines share the same warehouse)
 
-cargo run -p idb-bench --release -- --config benchmarks/tpcds/bench.yaml
-cargo run -p idb-bench --release -- --config benchmarks/tpcds/bench.yaml --json results/tpcds.json
+cargo run -p idb-bench --release -- --config benchmarks/tpcds/bench.yaml `
+  --notes "What you changed since the last run" `
+  --change "path/to/change: short description"
+
+cargo run -p idb-bench --release -- --config benchmarks/tpcds/bench.yaml --json results/tpcds-report.json
 ```
+
+Every benchmark run **appends to the audit log** unless you pass `--no-history`:
+
+| Artifact | Purpose |
+|----------|---------|
+| [`results/tpcds-history.jsonl`](../results/tpcds-history.jsonl) | Machine-readable run history (one JSON object per line) |
+| [`benchmarks/tpcds/HISTORY.md`](HISTORY.md) | Human-readable audit log (auto-regenerated) |
+
+Use `--label` for a short tag (e.g. `post-pushdown-patch`) and repeat `--change` for structured fix bullets. See [`HISTORY.md`](HISTORY.md) for past runs and deltas.
 
 You can skip copying and pass the example config directly:
 

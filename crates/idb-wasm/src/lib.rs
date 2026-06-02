@@ -131,6 +131,15 @@ pub fn idb_bytes_fetched() -> u64 {
     0
 }
 
+/// Stop the in-flight query: new S3 reads fail fast; UI should ignore the eventual promise.
+#[wasm_bindgen]
+pub fn idb_cancel_query() {
+    #[cfg(all(target_arch = "wasm32", feature = "horizon"))]
+    {
+        idb_catalog::request_query_cancel();
+    }
+}
+
 /// Distinct S3 objects fetched so far for the in-flight query (poll from JS).
 #[wasm_bindgen]
 pub fn idb_files_fetched() -> u64 {
@@ -189,19 +198,32 @@ async fn run_query(sql: String) -> Result<JsValue, JsValue> {
 
     #[cfg(target_arch = "wasm32")]
     {
-        #[cfg(feature = "horizon")]
-        idb_catalog::reset_bytes_fetched();
+        #[cfg(all(target_arch = "wasm32", feature = "horizon"))]
+        idb_catalog::reset_query_state();
         log_query(&format!("start: {}", truncate_log(&sql, 80)));
         log_query("entering DataFusion session.query");
     }
 
+    if query_cancelled_wasm() {
+        return Err(JsValue::from_str("Query cancelled"));
+    }
+
     let result = session.query(&sql).await.map_err(js_error)?;
+
+    if query_cancelled_wasm() {
+        return Err(JsValue::from_str("Query cancelled"));
+    }
 
     #[cfg(target_arch = "wasm32")]
     {
         log_query(&format!(
-            "done: {} row(s) in {} ms, {} file(s), {} bytes fetched",
-            result.row_count, result.elapsed_ms, result.files_fetched, result.bytes_fetched
+            "done: {} row(s) in {} ms, {} file(s), {} bytes fetched, byte-cache hits={} misses={}",
+            result.row_count,
+            result.elapsed_ms,
+            result.files_fetched,
+            result.bytes_fetched,
+            idb_catalog::byte_cache_hits(),
+            idb_catalog::byte_cache_misses()
         ));
         log_query("serializing for UI");
     }
@@ -301,6 +323,16 @@ impl QueryResponse {
             })
         }
     }
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "horizon"))]
+fn query_cancelled_wasm() -> bool {
+    idb_catalog::query_cancelled()
+}
+
+#[cfg(not(all(target_arch = "wasm32", feature = "horizon")))]
+fn query_cancelled_wasm() -> bool {
+    false
 }
 
 fn js_error(err: impl std::fmt::Display) -> JsValue {
