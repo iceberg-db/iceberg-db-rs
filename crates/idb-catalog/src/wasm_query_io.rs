@@ -44,10 +44,10 @@ pub fn reset_query_state() {
     QUERY_CANCELLED.store(false, Ordering::Relaxed);
 }
 
-pub fn add_bytes_fetched(n: u64) {
+pub fn add_bytes_fetched(_n: u64) {
     #[cfg(target_arch = "wasm32")]
-    if n > 0 {
-        BYTES_FETCHED.fetch_add(n, Ordering::Relaxed);
+    if _n > 0 {
+        BYTES_FETCHED.fetch_add(_n, Ordering::Relaxed);
     }
 }
 
@@ -61,7 +61,7 @@ pub fn bytes_fetched() -> u64 {
 }
 
 /// Count each distinct S3 object URL once per query (range reads share the same URL).
-pub fn record_s3_object_fetch(url: &str) {
+pub fn record_s3_object_fetch(_url: &str) {
     #[cfg(target_arch = "wasm32")]
     {
         let mut guard = SEEN_S3_OBJECTS.lock().expect("s3 object set lock");
@@ -71,7 +71,7 @@ pub fn record_s3_object_fetch(url: &str) {
         if guard
             .as_mut()
             .expect("s3 object set")
-            .insert(url.to_string())
+            .insert(_url.to_string())
         {
             S3_FILES_FETCHED.fetch_add(1, Ordering::Relaxed);
         }
