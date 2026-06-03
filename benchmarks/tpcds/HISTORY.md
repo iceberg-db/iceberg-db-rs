@@ -33,8 +33,302 @@ Use `--no-history` to skip recording. `speedup_vs_duckdb` > 1 means iceberg-db-r
 | 12 | 2026-05-31T11:07:34.764957500+00:00 | c13507d | - | 7417 ms | 2117 ms | 3004 ms | 847 ms | Star-schema filter pushdown v2 (stable) |
 | 13 | 2026-05-31T17:31:06.890369900+00:00 | c13507d | fk-bound-pushdown | 11566 ms | 1706 ms | 10849 ms | 660 ms | Static FK bound inference from filtered dimension scans (In… |
 | 14 | 2026-06-02T14:15:05.510463600+00:00 | c13507d | in-hash-filter-stacking | 5408 ms | 1475 ms | 2602 ms | 645 ms | Plan-time FK cache + integer IN row filter + stacked FK pre… |
+| 15 | 2026-06-02T15:11:44.820598900+00:00 | 5efaf1b | - | 3218 ms | 842 ms | 855 ms | 345 ms |  |
+| 16 | 2026-06-02T15:20:53.217124500+00:00 | 5efaf1b | tier1-star-layout | 2553 ms | 664 ms | 636 ms | 269 ms | Star parquet + Iceberg bloom/sort warehouse regen |
+| 17 | 2026-06-02T16:36:41.606167+00:00 | 5efaf1b | date-fk-range-planned-files | 4340 ms | 1580 ms | 1268 ms | 606 ms | Prefer Range for selective date FK bounds; planned_files me… |
+| 18 | 2026-06-02T16:47:42.223677800+00:00 | 5efaf1b | date-fk-range-4iter | 5269 ms | 1690 ms | 1140 ms | 664 ms | 4 timed iterations per query; report median (primary) and m… |
+| 19 | 2026-06-03T16:38:31.442386300+00:00 | 5efaf1b | tier1-real-blooms | 4970 ms | 1378 ms | 1082 ms | 513 ms | tableProperty blooms + date-range verify; fresh warehouse |
+| 20 | 2026-06-03T17:41:14.286664400+00:00 | 5efaf1b | - | 5797 ms | 1553 ms | 1177 ms | 643 ms | runtime dynamic filters on FK-pushed fact scan |
+| 21 | 2026-06-03T17:49:04.129961+00:00 | 5efaf1b | - | 3303 ms | 1436 ms | 1153 ms | 593 ms | runtime dynamic filters on FK-pushed fact scan |
+| 22 | 2026-06-03T17:50:56.432909400+00:00 | 5efaf1b | - | 2752 ms | 745 ms | 554 ms | 312 ms | runtime dynamic filters on FK-pushed fact scan |
+| 23 | 2026-06-03T17:53:03.136928200+00:00 | 5efaf1b | - | 2717 ms | 702 ms | 538 ms | 291 ms | runtime dynamic filters on FK-pushed fact scan |
 
 ## Run details
+
+### Run 23 — 2026-06-03T17:53:03.136928200+00:00
+
+- **Git:** `5efaf1b`
+- **Config:** `benchmarks/tpcds/bench-tier1-4iter.yaml`
+- **Warehouse:** `C:/Users/chand/.cursor/projects/empty-window/iceberg-db-rs-git/bench-data/tpcds-sf10/warehouse`
+- **Queries:** q01, q02, q03, q07
+- **Iterations:** 4, warmup: true
+- **target_partitions:** 4
+
+**Notes:**
+
+runtime dynamic filters on FK-pushed fact scan
+
+
+**Changes:**
+
+- fact_filter_pushdown: is_large_fact_table after FK bounds
+
+**Δ vs previous run:**
+- iceberg-db-rs total: -1.3% (2752 → 2717 ms)
+- q01 iceberg: -0.6% (170 → 169 ms)
+- q02 iceberg: -1.9% (1443 → 1415 ms)
+- q03 iceberg: +1.7% (585 → 595 ms)
+- q07 iceberg: -2.9% (554 → 538 ms)
+
+| Query | iceberg-db-rs (ms) | DuckDB (ms) | speedup | rows match |
+|-------|-------------------|-------------|---------|------------|
+| q01 | 169 | 94 | 0.56x | yes |
+| q02 | 1415 | 182 | 0.13x | yes |
+| q03 | 595 | 135 | 0.23x | yes |
+| q07 | 538 | 291 | 0.54x | yes |
+
+### Run 22 — 2026-06-03T17:50:56.432909400+00:00
+
+- **Git:** `5efaf1b`
+- **Config:** `benchmarks/tpcds/bench-tier1-4iter.yaml`
+- **Warehouse:** `C:/Users/chand/.cursor/projects/empty-window/iceberg-db-rs-git/bench-data/tpcds-sf10/warehouse`
+- **Queries:** q01, q02, q03, q07
+- **Iterations:** 4, warmup: true
+- **target_partitions:** 4
+
+**Notes:**
+
+runtime dynamic filters on FK-pushed fact scan
+
+
+**Changes:**
+
+- fact_filter_pushdown: is_large_fact_table after FK bounds
+
+**Δ vs previous run:**
+- iceberg-db-rs total: -16.7% (3303 → 2752 ms)
+- q01 iceberg: +1.8% (167 → 170 ms)
+- q02 iceberg: +4.3% (1383 → 1443 ms)
+- q03 iceberg: -2.5% (600 → 585 ms)
+- q07 iceberg: -52.0% (1153 → 554 ms)
+
+| Query | iceberg-db-rs (ms) | DuckDB (ms) | speedup | rows match |
+|-------|-------------------|-------------|---------|------------|
+| q01 | 170 | 101 | 0.59x | yes |
+| q02 | 1443 | 187 | 0.13x | yes |
+| q03 | 585 | 145 | 0.25x | yes |
+| q07 | 554 | 312 | 0.56x | yes |
+
+### Run 21 — 2026-06-03T17:49:04.129961+00:00
+
+- **Git:** `5efaf1b`
+- **Config:** `benchmarks/tpcds/bench-tier1-4iter.yaml`
+- **Warehouse:** `C:/Users/chand/.cursor/projects/empty-window/iceberg-db-rs-git/bench-data/tpcds-sf10/warehouse`
+- **Queries:** q01, q02, q03, q07
+- **Iterations:** 4, warmup: true
+- **target_partitions:** 4
+
+**Notes:**
+
+runtime dynamic filters on FK-pushed fact scan
+
+
+**Changes:**
+
+- fact_filter_pushdown: is_large_fact_table after FK bounds
+
+**Δ vs previous run:**
+- iceberg-db-rs total: -43.0% (5797 → 3303 ms)
+- q01 iceberg: -2.9% (172 → 167 ms)
+- q02 iceberg: -56.7% (3193 → 1383 ms)
+- q03 iceberg: -52.2% (1255 → 600 ms)
+- q07 iceberg: -2.0% (1177 → 1153 ms)
+
+| Query | iceberg-db-rs (ms) | DuckDB (ms) | speedup | rows match |
+|-------|-------------------|-------------|---------|------------|
+| q01 | 167 | 182 | 1.09x | yes |
+| q02 | 1383 | 391 | 0.28x | yes |
+| q03 | 600 | 270 | 0.45x | yes |
+| q07 | 1153 | 593 | 0.51x | yes |
+
+### Run 20 — 2026-06-03T17:41:14.286664400+00:00
+
+- **Git:** `5efaf1b`
+- **Config:** `benchmarks/tpcds/bench-tier1-4iter.yaml`
+- **Warehouse:** `C:/Users/chand/.cursor/projects/empty-window/iceberg-db-rs-git/bench-data/tpcds-sf10/warehouse`
+- **Queries:** q01, q02, q03, q07
+- **Iterations:** 4, warmup: true
+- **target_partitions:** 4
+
+**Notes:**
+
+runtime dynamic filters on FK-pushed fact scan
+
+
+**Changes:**
+
+- fact_filter_pushdown: is_large_fact_table after FK bounds
+
+**Δ vs previous run:**
+- iceberg-db-rs total: +16.6% (4970 → 5797 ms)
+- q01 iceberg: -5.0% (181 → 172 ms)
+- q02 iceberg: +24.7% (2561 → 3193 ms)
+- q03 iceberg: +9.5% (1146 → 1255 ms)
+- q07 iceberg: +8.8% (1082 → 1177 ms)
+
+| Query | iceberg-db-rs (ms) | DuckDB (ms) | speedup | rows match |
+|-------|-------------------|-------------|---------|------------|
+| q01 | 172 | 194 | 1.13x | yes |
+| q02 | 3193 | 434 | 0.14x | yes |
+| q03 | 1255 | 282 | 0.22x | yes |
+| q07 | 1177 | 643 | 0.55x | yes |
+
+### Run 19 — 2026-06-03T16:38:31.442386300+00:00
+
+- **Git:** `5efaf1b`
+- **Label:** tier1-real-blooms
+- **Config:** `benchmarks/tpcds/bench-tier1-4iter.yaml`
+- **Warehouse:** `C:/Users/chand/.cursor/projects/empty-window/iceberg-db-rs-git/bench-data/tpcds-sf10/warehouse`
+- **Queries:** q01, q02, q03, q07
+- **Iterations:** 4, warmup: true
+- **target_partitions:** 4
+
+**Notes:**
+
+tableProperty blooms + date-range verify; fresh warehouse
+
+
+**Changes:**
+
+- Parquet blooms on store_sales FK columns
+
+**Δ vs previous run:**
+- iceberg-db-rs total: -5.7% (5269 → 4970 ms)
+- q01 iceberg: -10.0% (201 → 181 ms)
+- q02 iceberg: -1.4% (2598 → 2561 ms)
+- q03 iceberg: -13.8% (1330 → 1146 ms)
+- q07 iceberg: -5.1% (1140 → 1082 ms)
+
+| Query | iceberg-db-rs (ms) | DuckDB (ms) | speedup | rows match |
+|-------|-------------------|-------------|---------|------------|
+| q01 | 181 | 173 | 0.96x | yes |
+| q02 | 2561 | 431 | 0.17x | yes |
+| q03 | 1146 | 261 | 0.23x | yes |
+| q07 | 1082 | 513 | 0.47x | yes |
+
+### Run 18 — 2026-06-02T16:47:42.223677800+00:00
+
+- **Git:** `5efaf1b`
+- **Label:** date-fk-range-4iter
+- **Config:** `benchmarks/tpcds/bench-tier1-4iter.yaml`
+- **Warehouse:** `C:/Users/chand/.cursor/projects/empty-window/iceberg-db-rs-git/bench-data/tpcds-sf10/warehouse`
+- **Queries:** q01, q02, q03, q07
+- **Iterations:** 4, warmup: true
+- **target_partitions:** 4
+
+**Notes:**
+
+4 timed iterations per query; report median (primary) and mean
+
+
+**Changes:**
+
+- dim_key_bounds: Range before InList
+- idb-bench: median/mean over iterations
+
+**Δ vs previous run:**
+- iceberg-db-rs total: +21.4% (4340 → 5269 ms)
+- q01 iceberg: -14.5% (235 → 201 ms)
+- q02 iceberg: +44.9% (1793 → 2598 ms)
+- q03 iceberg: +27.4% (1044 → 1330 ms)
+- q07 iceberg: -10.1% (1268 → 1140 ms)
+
+| Query | iceberg-db-rs (ms) | DuckDB (ms) | speedup | rows match |
+|-------|-------------------|-------------|---------|------------|
+| q01 | 201 | 247 | 1.23x | yes |
+| q02 | 2598 | 466 | 0.18x | yes |
+| q03 | 1330 | 313 | 0.24x | yes |
+| q07 | 1140 | 664 | 0.58x | yes |
+
+### Run 17 — 2026-06-02T16:36:41.606167+00:00
+
+- **Git:** `5efaf1b`
+- **Label:** date-fk-range-planned-files
+- **Config:** `benchmarks/tpcds/bench-tier1.yaml`
+- **Warehouse:** `C:/Users/chand/.cursor/projects/empty-window/iceberg-db-rs-git/bench-data/tpcds-sf10/warehouse`
+- **Queries:** q01, q02, q03, q07
+- **Iterations:** 1, warmup: true
+- **target_partitions:** 4
+
+**Notes:**
+
+Prefer Range for selective date FK bounds; planned_files metric on IcebergTableScan
+
+
+**Changes:**
+
+- dim_key_bounds: Range before InList when selective
+- IcebergTableScan: planned_files=N after plan_files()
+
+**Δ vs previous run:**
+- iceberg-db-rs total: +70.0% (2553 → 4340 ms)
+- q01 iceberg: +23.0% (191 → 235 ms)
+- q02 iceberg: +47.9% (1212 → 1793 ms)
+- q03 iceberg: +103.1% (514 → 1044 ms)
+- q07 iceberg: +99.4% (636 → 1268 ms)
+
+| Query | iceberg-db-rs (ms) | DuckDB (ms) | speedup | rows match |
+|-------|-------------------|-------------|---------|------------|
+| q01 | 235 | 181 | 0.77x | yes |
+| q02 | 1793 | 482 | 0.27x | yes |
+| q03 | 1044 | 311 | 0.30x | yes |
+| q07 | 1268 | 606 | 0.48x | yes |
+
+### Run 16 — 2026-06-02T15:20:53.217124500+00:00
+
+- **Git:** `5efaf1b`
+- **Label:** tier1-star-layout
+- **Config:** `benchmarks/tpcds/bench-tier1.yaml`
+- **Warehouse:** `C:/Users/chand/.cursor/projects/empty-window/iceberg-db-rs-git/bench-data/tpcds-sf10/warehouse`
+- **Queries:** q01, q02, q03, q07
+- **Iterations:** 1, warmup: true
+- **target_partitions:** 4
+
+**Notes:**
+
+Star parquet + Iceberg bloom/sort warehouse regen
+
+
+**Changes:**
+
+- generate-tpcds-parquet star layout
+- build-iceberg-warehouse sort+bloom
+
+**Δ vs previous run:**
+- iceberg-db-rs total: -20.7% (3218 → 2553 ms)
+- q01 iceberg: -19.1% (236 → 191 ms)
+- q02 iceberg: -19.0% (1497 → 1212 ms)
+- q03 iceberg: -18.4% (630 → 514 ms)
+- q07 iceberg: -25.6% (855 → 636 ms)
+
+| Query | iceberg-db-rs (ms) | DuckDB (ms) | speedup | rows match |
+|-------|-------------------|-------------|---------|------------|
+| q01 | 191 | 77 | 0.40x | yes |
+| q02 | 1212 | 174 | 0.14x | yes |
+| q03 | 514 | 144 | 0.28x | yes |
+| q07 | 636 | 269 | 0.42x | yes |
+
+### Run 15 — 2026-06-02T15:11:44.820598900+00:00
+
+- **Git:** `5efaf1b`
+- **Config:** `benchmarks/tpcds/bench-tier1.yaml`
+- **Warehouse:** `C:/Users/chand/.cursor/projects/empty-window/iceberg-db-rs-git/bench-data/tpcds-sf10/warehouse`
+- **Queries:** q01, q02, q03, q07
+- **Iterations:** 1, warmup: true
+- **target_partitions:** 4
+**Δ vs previous run:**
+- iceberg-db-rs total: -40.5% (5408 → 3218 ms)
+- q01 iceberg: -37.1% (375 → 236 ms)
+- q02 iceberg: -12.7% (1715 → 1497 ms)
+- q03 iceberg: -12.0% (716 → 630 ms)
+- q07 iceberg: -67.1% (2602 → 855 ms)
+
+| Query | iceberg-db-rs (ms) | DuckDB (ms) | speedup | rows match |
+|-------|-------------------|-------------|---------|------------|
+| q01 | 236 | 111 | 0.47x | yes |
+| q02 | 1497 | 217 | 0.14x | yes |
+| q03 | 630 | 169 | 0.27x | yes |
+| q07 | 855 | 345 | 0.40x | yes |
 
 ### Run 14 — 2026-06-02T14:15:05.510463600+00:00
 

@@ -114,10 +114,22 @@ pub fn print_report(report: &BenchReport) {
             s.engine, s.queries_ok, s.queries_failed, s.total_elapsed_ms, s.queries_run
         );
     }
-    println!(
-        "\n{:<8} {:>12} {:>12} {:>10} {:>8}",
-        "query", "iceberg_ms", "duckdb_ms", "speedup", "rows_ok"
-    );
+    let multi_iter = report
+        .iceberg_db
+        .results
+        .iter()
+        .any(|r| r.timed_iterations.is_some_and(|n| n > 1));
+    if multi_iter {
+        println!(
+            "\n{:<8} {:>12} {:>12} {:>12} {:>12} {:>10} {:>8}",
+            "query", "iceberg_med", "iceberg_mean", "duckdb_med", "duckdb_mean", "speedup", "rows_ok"
+        );
+    } else {
+        println!(
+            "\n{:<8} {:>12} {:>12} {:>10} {:>8}",
+            "query", "iceberg_ms", "duckdb_ms", "speedup", "rows_ok"
+        );
+    }
     for c in &report.comparisons {
         let speedup = c
             .speedup_vs_duckdb
@@ -141,10 +153,33 @@ pub fn print_report(report: &BenchReport) {
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "-".into())
         };
-        println!(
-            "{:<8} {:>12} {:>12} {:>10} {:>8}",
-            c.query_id, iceberg_ms, duckdb_ms, speedup, rows
-        );
+        if multi_iter {
+            let i_mean = report
+                .iceberg_db
+                .results
+                .iter()
+                .find(|r| r.query_id == c.query_id)
+                .and_then(|r| r.mean_elapsed_ms)
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "-".into());
+            let d_mean = report
+                .duckdb
+                .results
+                .iter()
+                .find(|r| r.query_id == c.query_id)
+                .and_then(|r| r.mean_elapsed_ms)
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "-".into());
+            println!(
+                "{:<8} {:>12} {:>12} {:>12} {:>12} {:>10} {:>8}",
+                c.query_id, iceberg_ms, i_mean, duckdb_ms, d_mean, speedup, rows
+            );
+        } else {
+            println!(
+                "{:<8} {:>12} {:>12} {:>10} {:>8}",
+                c.query_id, iceberg_ms, duckdb_ms, speedup, rows
+            );
+        }
         if let Some(err) = &c.iceberg_error {
             println!("  iceberg-db-rs: {err}");
         }

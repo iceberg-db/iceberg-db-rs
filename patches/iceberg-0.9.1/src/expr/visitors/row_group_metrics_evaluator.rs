@@ -35,7 +35,8 @@ pub(crate) struct RowGroupMetricsEvaluator<'a> {
     snapshot_schema: &'a Schema,
 }
 
-const IN_PREDICATE_LIMIT: usize = 200;
+/// Max literals for row-group min/max overlap on `IN` predicates.
+const IN_PREDICATE_LIMIT: usize = 4096;
 const ROW_GROUP_MIGHT_MATCH: Result<bool> = Ok(true);
 const ROW_GROUP_CANT_MATCH: Result<bool> = Ok(false);
 

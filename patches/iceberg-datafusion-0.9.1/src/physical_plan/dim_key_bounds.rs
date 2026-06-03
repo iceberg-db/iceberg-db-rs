@@ -176,6 +176,13 @@ async fn plan_time_join_key_constraint(
         return Ok(None);
     }
 
+    let min = min_datum(&distinct).expect("non-empty distinct set");
+    let max = max_datum(&distinct).expect("non-empty distinct set");
+    // Prefer tight min/max for manifest file pruning (e.g. d_year=2000 → ~366-day range).
+    if range_is_selective(&min, &max, distinct.len()) {
+        return Ok(Some(JoinKeyConstraint::Range(min, max)));
+    }
+
     if distinct.len() <= MAX_INLIST_VALUES {
         return Ok(Some(JoinKeyConstraint::InList(distinct.into_iter().collect())));
     }
@@ -184,13 +191,7 @@ async fn plan_time_join_key_constraint(
         return Ok(None);
     }
 
-    let min = min_datum(&distinct).expect("non-empty distinct set");
-    let max = max_datum(&distinct).expect("non-empty distinct set");
-    if range_is_selective(&min, &max, distinct.len()) {
-        Ok(Some(JoinKeyConstraint::Range(min, max)))
-    } else {
-        Ok(None)
-    }
+    Ok(None)
 }
 
 fn collect_distinct_from_array(array: &dyn Array, distinct: &mut HashSet<Datum>) -> DFResult<()> {

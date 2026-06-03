@@ -7,7 +7,14 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryRunResult {
     pub query_id: String,
+    /// Primary latency: median when `iterations` > 1, else the single timed run.
     pub elapsed_ms: u64,
+    /// Mean across timed iterations (present when `iterations` > 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mean_elapsed_ms: Option<u64>,
+    /// Number of timed iterations aggregated into `elapsed_ms` / `mean_elapsed_ms`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timed_iterations: Option<u32>,
     pub row_count: usize,
     pub error: Option<String>,
 }

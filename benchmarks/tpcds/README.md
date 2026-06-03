@@ -58,6 +58,49 @@ If you only want Parquet generation first:
 .\scripts\setup-local-tpcds.ps1 -ScaleFactor 1 -ParquetOnly
 ```
 
+## Tier 1 — star layout + bench tuning (vs DuckDB)
+
+**Why:** Default Spark CTAS from a single Parquet file per table often yields **one huge row group per file** spanning the full FK domain, so min/max and `IN` stats cannot skip I/O. DuckDB still wins on decode until the warehouse is clustered.
+
+**Regenerate** (Parquet + Iceberg; use `-FreshWarehouse` when replacing an existing warehouse):
+
+```powershell
+.\scripts\setup-local-tpcds.ps1 -Root .\bench-data\tpcds-sf10 -ScaleFactor 10 -FreshWarehouse
+```
+
+`generate-tpcds-parquet.py` defaults to `--layout star`: fact tables are **hash-sharded**, **sorted by date/FK**, with `ROW_GROUP_SIZE` 131072. `build-iceberg-warehouse.py` **re-sorts** facts on write and enables **Parquet bloom filters** on FK columns via Iceberg **`tableProperty`** (`write.parquet.bloom-filter-enabled.column.*`) on CTAS — not `.option()`, which does not enable blooms.
+
+**Verify blooms** after rebuild:
+
+```powershell
+python scripts/check-store-sales-bloom.py
+# or rebuild one fact table:
+python scripts/build-iceberg-warehouse.py --parquet-root bench-data/tpcds-sf10/parquet `
+  --warehouse-root bench-data/tpcds-sf10/warehouse --tables store_sales
+```
+
+**Benchmark** with join-friendly session options (fewer partitions, no join repartition after heavy fact pruning):
+
+```powershell
+# Edit warehouse paths in bench-tier1.yaml if needed
+cargo run -p idb-bench --release -- --config benchmarks/tpcds/bench-tier1.yaml `
+  --label tier1-star-layout `
+  --notes "Star parquet + Iceberg bloom; repartition_joins=false"
+```
+
+**Code changes (no data regen):** iceberg scan enables page-index row selection when metadata allows; Iceberg `IN` stats pruning limit raised to 4096 (date `IN` lists).
+
+**4-iteration medians** (less noise than a single timed run):
+
+```powershell
+cargo run -p idb-bench --release -- --config benchmarks/tpcds/bench-tier1-4iter.yaml `
+  --label tier1-dynamic-fact-warm `
+  --notes "Runtime dynamic filters on FK-pushed store_sales; warm cache" `
+  --change "fact_filter_pushdown: is_large_fact_table after FK bounds"
+```
+
+`IcebergFactFilterPushdown` uses `is_large_fact_table()` so hash-join dynamic filters still attach after `IcebergFkBoundPushdown` adds static FK predicates. See [`patches/iceberg-datafusion-0.9.1/PATCH.md`](../../patches/iceberg-datafusion-0.9.1/PATCH.md). Visual history: [`canvases/tpcds-sf10-benchmark.canvas.tsx`](../../canvases/tpcds-sf10-benchmark.canvas.tsx).
+
 ## Run
 
 Run these from the **repository root** (`iceberg-db-rs-git/`), not `web-wasm/`.

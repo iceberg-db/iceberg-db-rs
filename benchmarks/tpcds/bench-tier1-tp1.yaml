@@ -1,0 +1,18 @@
+# Tier 1 + single scan/join partition (A/B vs bench-tier1.yaml target_partitions: 4)
+
+warehouse: C:/Users/chand/.cursor/projects/empty-window/iceberg-db-rs-git/bench-data/tpcds-sf10/warehouse
+catalog: local
+schema: tpcds
+
+manifest: benchmarks/tpcds/manifest.toml
+iterations: 1
+warmup: true
+
+target_partitions: 1
+repartition_joins: false
+repartition_file_scans: true
+enable_join_dynamic_filter_pushdown: true
+
+duckdb:
+  warehouse: C:/Users/chand/.cursor/projects/empty-window/iceberg-db-rs-git/bench-data/tpcds-sf10/warehouse
+  schema: tpcds

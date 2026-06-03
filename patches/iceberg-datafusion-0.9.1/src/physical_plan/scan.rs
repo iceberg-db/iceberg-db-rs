@@ -30,6 +30,7 @@
 use std::any::Any;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef as ArrowSchemaRef;
@@ -87,6 +88,8 @@ pub struct IcebergTableScan {
     limit: Option<usize>,
     /// Number of parallel scan partitions exposed to DataFusion.
     scan_partitions: usize,
+    /// Filled on first `plan_files()` during execute (partition 0); used in EXPLAIN output.
+    planned_file_count: Arc<AtomicUsize>,
 }
 
 impl IcebergTableScan {
@@ -121,6 +124,7 @@ impl IcebergTableScan {
             physical_filters: Vec::new(),
             limit,
             scan_partitions,
+            planned_file_count: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -366,6 +370,7 @@ impl ExecutionPlan for IcebergTableScan {
             .options()
             .optimizer
             .repartition_file_min_size;
+        let planned_file_count = Arc::clone(&self.planned_file_count);
 
         let fut = async move {
             let merged = merge_iceberg_predicates(
@@ -381,6 +386,7 @@ impl ExecutionPlan for IcebergTableScan {
                 partition,
                 scan_partitions,
                 min_file_size,
+                planned_file_count,
             )
             .await
         };
@@ -419,9 +425,15 @@ impl DisplayAs for IcebergTableScan {
         _t: datafusion::physical_plan::DisplayFormatType,
         f: &mut std::fmt::Formatter,
     ) -> std::fmt::Result {
+        let planned = self.planned_file_count.load(Ordering::Relaxed);
+        let planned_suffix = if planned > 0 {
+            format!(" planned_files={planned}")
+        } else {
+            String::new()
+        };
         write!(
             f,
-            "IcebergTableScan partitions={} projection:[{}] predicate:[{}]",
+            "IcebergTableScan partitions={}{planned_suffix} projection:[{}] predicate:[{}]",
             self.scan_partitions,
             self.projection
                 .clone()
@@ -439,12 +451,14 @@ async fn read_partition(
     partition: usize,
     scan_partitions: usize,
     min_file_size: usize,
+    planned_file_count: Arc<AtomicUsize>,
 ) -> DFResult<Pin<Box<dyn Stream<Item = DFResult<RecordBatch>> + Send>>> {
     let scan_builder = match snapshot_id {
         Some(snapshot_id) => table.scan().snapshot_id(snapshot_id),
         None => table.scan(),
     };
 
+    let has_predicate = predicates.is_some();
     let mut scan_builder = match column_names {
         Some(column_names) => scan_builder.select(column_names),
         None => scan_builder.select_all(),
@@ -462,6 +476,15 @@ async fn read_partition(
         .await
         .map_err(to_datafusion_error)?;
 
+    if partition == 0 {
+        let _ = planned_file_count.compare_exchange(
+            0,
+            tasks.len(),
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        );
+    }
+
     let min_file_size = if min_file_size == 0 {
         DEFAULT_REPARTITION_FILE_MIN_SIZE
     } else {
@@ -477,7 +500,12 @@ async fn read_partition(
     let task_stream: FileScanTaskStream =
         Box::pin(futures::stream::iter(partition_tasks.into_iter().map(Ok)));
 
-    let stream = ArrowReaderBuilder::new(table.file_io().clone())
+    let mut arrow_reader = ArrowReaderBuilder::new(table.file_io().clone());
+    if has_predicate {
+        // Page-index row selection when metadata supports it (see iceberg reader fallback).
+        arrow_reader = arrow_reader.with_row_selection_enabled(true);
+    }
+    let stream = arrow_reader
         .build()
         .read(task_stream)
         .map_err(to_datafusion_error)?
