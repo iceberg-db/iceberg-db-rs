@@ -73,7 +73,9 @@ pub fn idb_init_demo() -> js_sys::Promise {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            init_demo().await
+            Err(JsValue::from_str(
+                "idb_init_demo is only available in a wasm32 build (trunk serve)",
+            ))
         }
     })
 }
@@ -150,15 +152,11 @@ pub fn idb_files_fetched() -> u64 {
     0
 }
 
+#[cfg(target_arch = "wasm32")]
 async fn init_demo() -> Result<JsValue, JsValue> {
-    #[cfg(target_arch = "wasm32")]
     log_init("demo tables");
-
     let session = SqlSession::from_wasm_demo().await.map_err(js_error)?;
-
-    #[cfg(target_arch = "wasm32")]
     log_init("done");
-
     store_session(session)
 }
 
