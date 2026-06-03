@@ -1,4 +1,4 @@
-//! Browser demo session without Iceberg (avoids Moka cache using `std::time` on wasm).
+//! Demo session without external Iceberg storage.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -12,6 +12,9 @@ use datafusion::catalog::{
 use datafusion::datasource::MemTable;
 use datafusion::execution::context::SessionContext;
 
+#[cfg(not(target_arch = "wasm32"))]
+use datafusion::prelude::SessionConfig;
+
 use iceberg::memory::{MemoryCatalogBuilder, MEMORY_CATALOG_WAREHOUSE};
 use iceberg::CatalogBuilder;
 
@@ -21,8 +24,8 @@ const CATALOG: &str = "local";
 const SCHEMA: &str = "demo";
 const TABLE: &str = "customers";
 
-/// In-memory `demo.customers` (3 rows) for WASM — same shape as the Java/Rust seeders.
-pub async fn open_wasm_demo_session() -> Result<SqlSession> {
+/// In-memory `demo.customers` (3 rows) for demos and native smoke builds.
+pub async fn open_demo_session() -> Result<SqlSession> {
     let arrow_schema = Arc::new(ArrowSchema::new(vec![
         Field::new("id", DataType::Int32, false),
         Field::new("name", DataType::Utf8, false),
@@ -39,8 +42,7 @@ pub async fn open_wasm_demo_session() -> Result<SqlSession> {
     )
     .context("demo customers batch")?;
 
-    let mem_table =
-        MemTable::try_new(arrow_schema, vec![vec![batch]]).context("demo mem table")?;
+    let mem_table = MemTable::try_new(arrow_schema, vec![vec![batch]]).context("demo mem table")?;
 
     let schema_provider = MemorySchemaProvider::new();
     schema_provider.register_table(TABLE.to_string(), Arc::new(mem_table))?;
@@ -48,7 +50,13 @@ pub async fn open_wasm_demo_session() -> Result<SqlSession> {
     let catalog_provider = MemoryCatalogProvider::new();
     catalog_provider.register_schema(SCHEMA, Arc::new(schema_provider))?;
 
+    #[cfg(target_arch = "wasm32")]
     let config = crate::wasm_session_config(CATALOG, "public");
+    #[cfg(not(target_arch = "wasm32"))]
+    let config = SessionConfig::new()
+        .with_information_schema(true)
+        .with_create_default_catalog_and_schema(false)
+        .with_default_catalog_and_schema(CATALOG, "public");
     let ctx = SessionContext::new_with_config(config);
     ctx.register_catalog(CATALOG, Arc::new(catalog_provider));
     ctx.catalog(CATALOG)
@@ -58,14 +66,14 @@ pub async fn open_wasm_demo_session() -> Result<SqlSession> {
     let iceberg_catalog: Arc<dyn iceberg::Catalog> = Arc::new(
         MemoryCatalogBuilder::default()
             .load(
-                "wasm",
+                "demo",
                 HashMap::from([(
                     MEMORY_CATALOG_WAREHOUSE.to_string(),
                     "memory://".to_string(),
                 )]),
             )
             .await
-            .context("wasm memory catalog")?,
+            .context("demo memory catalog")?,
     );
 
     Ok(SqlSession {

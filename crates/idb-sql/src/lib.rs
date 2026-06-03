@@ -3,8 +3,7 @@
 mod case_insensitive;
 mod session_options;
 
-#[cfg(target_arch = "wasm32")]
-mod wasm_demo;
+mod demo_session;
 #[cfg(all(target_arch = "wasm32", feature = "native"))]
 mod wasm_lazy_catalog;
 
@@ -79,10 +78,14 @@ pub struct SqlSession {
 }
 
 impl SqlSession {
-    /// Browser demo: `demo.customers` in a DataFusion memory catalog (no Iceberg/Moka).
-    #[cfg(target_arch = "wasm32")]
+    /// Demo session: `demo.customers` in a DataFusion memory catalog (no external catalog).
+    pub async fn from_demo() -> Result<Self> {
+        demo_session::open_demo_session().await
+    }
+
+    /// Browser demo compatibility alias.
     pub async fn from_wasm_demo() -> Result<Self> {
-        wasm_demo::open_wasm_demo_session().await
+        Self::from_demo().await
     }
 
     #[cfg(feature = "native")]

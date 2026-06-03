@@ -154,7 +154,7 @@ async fn init_demo() -> Result<JsValue, JsValue> {
     #[cfg(target_arch = "wasm32")]
     log_init("demo tables");
 
-    let session = SqlSession::from_wasm_demo().await.map_err(js_error)?;
+    let session = SqlSession::from_demo().await.map_err(js_error)?;
 
     #[cfg(target_arch = "wasm32")]
     log_init("done");
