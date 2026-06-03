@@ -10,6 +10,8 @@ Upstream: [apache/iceberg-rust](https://github.com/apache/iceberg-rust) `iceberg
 | Equality deletes | `src/arrow/caching_delete_file_loader.rs`, `delete_filter.rs` | Fix inverted predicate / missing delete predicate errors |
 | Native scans | `src/utils.rs` | Tunable `available_parallelism()` for file/manifest concurrency |
 | Efficient `IN` row filter | `src/arrow/reader.rs` | Single-pass hash-set membership for integer `IN` predicates (see below) |
+| `IN` stats pruning limit | `src/expr/visitors/*_evaluator.rs` | Raise `IN_PREDICATE_LIMIT` from 200 → 4096 so date-sized `IN` lists prune manifests/row groups |
+| Row selection fallback | `src/arrow/reader.rs` | Skip page-index `RowSelection` when column index is missing; keep row-group + `RowFilter` |
 
 ## Efficient integer `IN` row filter
 

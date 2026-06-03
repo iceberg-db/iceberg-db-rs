@@ -61,7 +61,8 @@ This fork adds **general** scan optimizations for DataFusion 52 (no query-specif
 
 **Fix:**
 
-- New rule `physical_plan/fact_filter_pushdown.rs` walks the physical plan post–filter-pushdown and attaches each ancestor hash join's `DynamicFilterPhysicalExpr` to **direct** fact-table `IcebergTableScan` nodes on the probe path (matches scan nodes only — does not peel `RepartitionExec`, which would drop distribution wrappers).
+- New rule `physical_plan/fact_filter_pushdown.rs` walks the physical plan post–filter-pushdown and attaches each ancestor hash join's `DynamicFilterPhysicalExpr` to **direct** large fact `IcebergTableScan` nodes on the probe path (matches scan nodes only — does not peel `RepartitionExec`, which would drop distribution wrappers).
+- Targets scans via `is_large_fact_table()` (snapshot row count), **not** `is_fact_like()` (unfiltered only), so dynamic filters still stack after `IcebergFkBoundPushdown` has AND-merged static FK bounds onto the same fact scan.
 - Execute-time merge in `scan.rs` resolves dynamic filters via non-blocking `current()` and AND-decomposes convertible bounds in `physical_expr_to_predicate.rs`.
 
 **Files:** `fact_filter_pushdown.rs`, `physical_expr_to_predicate.rs`, `scan.rs`
@@ -93,7 +94,8 @@ This fork adds **general** scan optimizations for DataFusion 52 (no query-specif
 **Fix:**
 
 - New rule `physical_plan/fk_bound_pushdown.rs` walks hash joins post–filter-pushdown. When one side is a **filtered** dimension Iceberg scan (static Iceberg predicates) and the other side contains a fact scan, plan-time key inference attaches FK constraints to matching fact scans in that join subtree.
-- New module `physical_plan/dim_key_bounds.rs` reads filtered dimension keys via `plan_files()` + Arrow (capped at 512 Ki rows). Emits `IN` lists for ≤131072 distinct keys (sized so selective semi-join reductions such as ~27 Ki matching `cd_demo_sk` are pushed); tight min/max ranges only when selective. Skips unfiltered dimensions and useless wide ranges.
+- New module `physical_plan/dim_key_bounds.rs` reads filtered dimension keys via `plan_files()` + Arrow (capped at 512 Ki rows). **Prefers tight min/max `Range` predicates** when `max−min` is selective (e.g. `d_year = 2000` → 366-day span) so Iceberg manifest file pruning can drop non-overlapping data files; falls back to `IN` lists for ≤131072 distinct non-selective sets (e.g. ~27 Ki `cd_demo_sk`). Skips unfiltered dimensions and useless wide ranges.
+- `IcebergTableScan` records `planned_files=N` after the first `plan_files()` during execute (visible in `idb-bench --explain q07` summary and EXPLAIN ANALYZE plan text).
 - `IcebergTableScan::with_additional_static_predicate()` AND-merges constraints. Applies only when the fact column exists on the target scan (avoids cross-table predicate bugs in multi-fact queries like q01).
 
 **Plan-time cache (a):** `dim_key_bounds` memoizes the inferred constraint per `(table uuid, snapshot, dimension predicate, key column)` in a process-global cache, so the synchronous dimension reads run once instead of on every warmup / iteration / EXPLAIN plan.
@@ -104,7 +106,9 @@ Together with the patched integer `IN` row filter in `iceberg` (single-pass hash
 
 **Files:** `fk_bound_pushdown.rs`, `dim_key_bounds.rs`, `scan.rs`, `lib.rs`
 
-**Validate:** `idb-bench --explain q07` — `store_sales` scan shows `ss_cdemo_sk IN (...) AND ss_sold_date_sk IN (...) AND ss_promo_sk IN (...)`. Innermost join fact input drops from ~28 Mi (or ~5 Mi with date only) to **~75 Ki**, matching DuckDB's ~94 Ki row count. q07 wall time ~3.6 s (down from the ~7.2 s regression). Note: the sf10 `store_sales` files are single 1.47M-row row groups spanning the full key domain with no bloom filters, so file/row-group *pruning* (stats/bloom) cannot skip reads on this dataset — the reduction comes from the scan-time membership filter. Decode-time pruning would require re-clustering the data by date + writing bloom filters on the FK columns.
+**Validate:** `idb-bench --explain q07` — summary block lists `store_sales: planned_files=2` (same file count as DuckDB on Tier-1 date-clustered warehouse) with `ss_sold_date_sk` pushed as **range** (`>=` / `<=`). Fact scan still uses `IN` for wide semi-join keys (e.g. `cd_demo_sk`). Innermost join fact input ~**75 Ki** rows, matching DuckDB's ~94 Ki. Row-group decode pruning still benefits from blooms + multi–row-group files when present.
+
+**Tier 1 data + scan (see `benchmarks/tpcds/README.md`):** Regenerate with `setup-local-tpcds.ps1` (star Parquet + sorted/bloom Iceberg write). `read_partition` enables iceberg `row_selection` when a scan predicate is present. Use `bench-tier1.yaml` (`repartition_joins: false`, `target_partitions: 4`).
 
 ## Optimizer registration order
 

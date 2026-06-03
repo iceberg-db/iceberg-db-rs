@@ -15,8 +15,10 @@ manifest: benchmarks/tpcds/manifest.toml
 iterations: 1
 warmup: true
 
-# iceberg-db-rs tuning (A/B against defaults):
-# target_partitions: 20
+# iceberg-db-rs tuning (see benchmarks/tpcds/bench-tier1.yaml for Tier 1 profile):
+# target_partitions: 4
+# repartition_joins: false
+# repartition_file_scans: true
 
 # DuckDB uses the Iceberg extension on the same warehouse (fair comparison).
 duckdb:

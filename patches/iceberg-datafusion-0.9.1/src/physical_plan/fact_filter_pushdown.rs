@@ -15,7 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! Attach hash-join dynamic filters from ancestor joins onto fact-table Iceberg scans.
+//! Attach hash-join dynamic filters from ancestor joins onto large fact-table Iceberg scans.
+//!
+//! Uses [`IcebergTableScan::is_large_fact_table`] (not [`IcebergTableScan::is_fact_like`]) so
+//! runtime dynamic filters still apply after plan-time FK bound pushdown has added static
+//! predicates to the same scan.
 
 use std::sync::Arc;
 
@@ -62,7 +66,7 @@ fn push_filters_to_fact_scans(
     // Match scan nodes only — do not peel RepartitionExec/Projection wrappers or the
     // RepartitionExec above a probe-side scan is dropped from the plan.
     if let Some(scan) = plan.as_any().downcast_ref::<super::scan::IcebergTableScan>()
-        && scan.is_fact_like()
+        && scan.is_large_fact_table()
     {
         let updated = scan.with_extra_physical_filters(inherited);
         if updated.physical_filters().len() == scan.physical_filters().len() {

@@ -1,0 +1,19 @@
+# Tier 1 profile with 4 timed iterations per query (median + mean reported).
+# Same session tuning as bench-tier1.yaml.
+
+warehouse: C:/Users/chand/.cursor/projects/empty-window/iceberg-db-rs-git/bench-data/tpcds-sf10/warehouse
+catalog: local
+schema: tpcds
+
+manifest: benchmarks/tpcds/manifest.toml
+iterations: 4
+warmup: true
+
+target_partitions: 4
+repartition_joins: false
+repartition_file_scans: true
+enable_join_dynamic_filter_pushdown: true
+
+duckdb:
+  warehouse: C:/Users/chand/.cursor/projects/empty-window/iceberg-db-rs-git/bench-data/tpcds-sf10/warehouse
+  schema: tpcds

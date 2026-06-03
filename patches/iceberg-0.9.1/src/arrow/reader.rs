@@ -546,13 +546,19 @@ impl ArrowReader {
             }
 
             if row_selection_enabled {
-                row_selection = Some(Self::get_row_selection_for_filter_predicate(
+                // Page-index row selection skips pages inside row groups. Files without a
+                // Parquet column/offset index still benefit from row-group stats + RowFilter.
+                match Self::get_row_selection_for_filter_predicate(
                     &predicate,
                     record_batch_stream_builder.metadata(),
                     &selected_row_group_indices,
                     &field_id_map,
                     &task.schema,
-                )?);
+                ) {
+                    Ok(sel) => row_selection = Some(sel),
+                    Err(e) if e.kind() == ErrorKind::Unexpected => {}
+                    Err(e) => return Err(e),
+                }
             }
         }
 

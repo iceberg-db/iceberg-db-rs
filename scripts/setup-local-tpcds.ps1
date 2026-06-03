@@ -66,7 +66,7 @@ if (-not $ParquetOnly) {
       --warehouse-root $warehouseRoot `
       --catalog local `
       --schema tpcds `
-      --driver-memory 8g `
+      --driver-memory 12g `
       @freshArg
   }
 } else {

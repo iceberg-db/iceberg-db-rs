@@ -22,7 +22,7 @@ use crate::expr::{BoundPredicate, BoundReference};
 use crate::spec::{DataFile, Datum, PrimitiveLiteral};
 use crate::{Error, ErrorKind};
 
-const IN_PREDICATE_LIMIT: usize = 200;
+const IN_PREDICATE_LIMIT: usize = 4096;
 const ROWS_MIGHT_MATCH: crate::Result<bool> = Ok(true);
 const ROWS_CANNOT_MATCH: crate::Result<bool> = Ok(false);
 

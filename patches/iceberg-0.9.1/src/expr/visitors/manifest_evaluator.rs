@@ -103,7 +103,8 @@ impl<'a> ManifestFilterVisitor<'a> {
 
 const ROWS_MIGHT_MATCH: Result<bool> = Ok(true);
 const ROWS_CANNOT_MATCH: Result<bool> = Ok(false);
-const IN_PREDICATE_LIMIT: usize = 200;
+/// Max literals for min/max overlap pruning on `IN` predicates (date keys ~366, etc.).
+const IN_PREDICATE_LIMIT: usize = 4096;
 
 impl BoundPredicateVisitor for ManifestFilterVisitor<'_> {
     type T = bool;

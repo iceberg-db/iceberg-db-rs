@@ -35,22 +35,49 @@ async fn run_engine(
     warmup: bool,
     iterations: u32,
 ) -> Vec<QueryRunResult> {
+    let timed_iters = iterations.max(1);
     let mut results = Vec::new();
     for q in queries {
         let sql = &q.sql;
         if warmup {
             let _ = engine.run_query(&q.id, &sql).await;
         }
+        let mut samples_ms = Vec::with_capacity(timed_iters as usize);
         let mut last = QueryRunResult {
             query_id: q.id.clone(),
             elapsed_ms: 0,
+            mean_elapsed_ms: None,
+            timed_iterations: None,
             row_count: 0,
             error: Some("no iterations".into()),
         };
-        for _ in 0..iterations.max(1) {
+        for _ in 0..timed_iters {
             last = engine.run_query(&q.id, &sql).await;
+            if last.error.is_none() {
+                samples_ms.push(last.elapsed_ms);
+            }
+        }
+        if timed_iters > 1 && !samples_ms.is_empty() {
+            last.elapsed_ms = median_ms(&samples_ms);
+            last.mean_elapsed_ms = Some(mean_ms(&samples_ms));
+            last.timed_iterations = Some(timed_iters);
         }
         results.push(last);
     }
     results
+}
+
+fn median_ms(samples: &[u64]) -> u64 {
+    let mut sorted = samples.to_vec();
+    sorted.sort_unstable();
+    let n = sorted.len();
+    if n == 1 {
+        return sorted[0];
+    }
+    (sorted[(n - 1) / 2] + sorted[n / 2]) / 2
+}
+
+fn mean_ms(samples: &[u64]) -> u64 {
+    let sum: u64 = samples.iter().sum();
+    sum / samples.len() as u64
 }

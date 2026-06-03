@@ -33,7 +33,7 @@ use crate::{Error, ErrorKind, Result};
 
 type OffsetIndex = Vec<OffsetIndexMetaData>;
 
-const IN_PREDICATE_LIMIT: usize = 200;
+const IN_PREDICATE_LIMIT: usize = 4096;
 
 enum MissingColBehavior {
     CantMatch,

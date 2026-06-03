@@ -73,6 +73,8 @@ impl BenchEngine for IcebergDbEngine {
             Ok(result) => QueryRunResult {
                 query_id: query_id.to_string(),
                 elapsed_ms: result.elapsed_ms.max(started.elapsed().as_millis() as u64),
+                mean_elapsed_ms: None,
+                timed_iterations: None,
                 row_count: result.row_count,
                 error: None,
             },
@@ -82,6 +84,8 @@ impl BenchEngine for IcebergDbEngine {
                 QueryRunResult {
                     query_id: query_id.to_string(),
                     elapsed_ms: started.elapsed().as_millis() as u64,
+                    mean_elapsed_ms: None,
+                    timed_iterations: None,
                     row_count: 0,
                     error: Some(msg),
                 }

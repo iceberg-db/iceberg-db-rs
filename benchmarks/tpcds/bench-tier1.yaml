@@ -1,0 +1,20 @@
+# Tier 1 benchmark profile: star-layout warehouse + join-friendly session tuning.
+# Regenerate data first (see benchmarks/tpcds/README.md § Tier 1).
+
+warehouse: C:/Users/chand/.cursor/projects/empty-window/iceberg-db-rs-git/bench-data/tpcds-sf10/warehouse
+catalog: local
+schema: tpcds
+
+manifest: benchmarks/tpcds/manifest.toml
+iterations: 1
+warmup: true
+
+# After heavy fact pruning, avoid repartitioning ~75K rows across all cores.
+target_partitions: 4
+repartition_joins: false
+repartition_file_scans: true
+enable_join_dynamic_filter_pushdown: true
+
+duckdb:
+  warehouse: C:/Users/chand/.cursor/projects/empty-window/iceberg-db-rs-git/bench-data/tpcds-sf10/warehouse
+  schema: tpcds
