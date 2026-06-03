@@ -10,12 +10,12 @@ pub fn qualify_tpcds_sql(sql: &str, schema: &str) -> String {
     tables.sort_by_key(|t| std::cmp::Reverse(t.len()));
     let mut out = sql.to_string();
     for table in tables {
-        let pattern = format!(r"(?i)(?<!\.)\b{}\b", regex::escape(table));
+        let pattern = format!(r"(?i)(^|[^.A-Za-z0-9_])({})\b", regex::escape(table));
         let re = match Regex::new(&pattern) {
             Ok(re) => re,
             Err(_) => continue,
         };
-        let replacement = format!("{schema}.{table}");
+        let replacement = format!("${{1}}{schema}.{table}");
         out = re.replace_all(&out, replacement.as_str()).into_owned();
     }
     out
