@@ -10,12 +10,17 @@ pub fn qualify_tpcds_sql(sql: &str, schema: &str) -> String {
     tables.sort_by_key(|t| std::cmp::Reverse(t.len()));
     let mut out = sql.to_string();
     for table in tables {
-        let pattern = format!(r"(?i)(?<!\.)\b{}\b", regex::escape(table));
+        // No look-around: the `regex` build on some targets rejects `(?<!…)`.
+        // Delimiter classes avoid matching `store` inside `store_sales` and `tpcds.store_sales`.
+        let pattern = format!(
+            r"(?i)(^|[^.\w]){table}([^.\w]|$)",
+            table = regex::escape(table)
+        );
         let re = match Regex::new(&pattern) {
             Ok(re) => re,
             Err(_) => continue,
         };
-        let replacement = format!("{schema}.{table}");
+        let replacement = format!("${{1}}{schema}.{table}${{2}}");
         out = re.replace_all(&out, replacement.as_str()).into_owned();
     }
     out
@@ -29,8 +34,10 @@ mod tests {
     fn qualifies_from_clause() {
         let sql = "SELECT 1 FROM store_sales, date_dim WHERE x = 1";
         let got = qualify_tpcds_sql(sql, "tpcds");
-        assert!(got.contains("tpcds.store_sales"));
-        assert!(got.contains("tpcds.date_dim"));
+        assert_eq!(
+            got,
+            "SELECT 1 FROM tpcds.store_sales, tpcds.date_dim WHERE x = 1"
+        );
     }
 
     #[test]
